@@ -1,52 +1,48 @@
-import PyInstaller.__main__
+#!/usr/bin/env python3
+"""
+Build script for XtoCHD executable using PyInstaller
+"""
+
 import os
 import sys
+import subprocess
+import shutil
 
-def build_exe():
-    """Build the XtoCHD executable using PyInstaller"""
+def main():
+    print("Building XtoCHD executable...")
     
-    # Get the directory where this script is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Check if PyInstaller is installed
+    try:
+        import PyInstaller
+    except ImportError:
+        print("PyInstaller not found. Installing...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
     
-    # Define the spec file path
-    spec_file = os.path.join(script_dir, 'xtochd.spec')
+    # Clean previous builds
+    if os.path.exists("build"):
+        shutil.rmtree("build")
+    if os.path.exists("dist"):
+        shutil.rmtree("dist")
     
-    # PyInstaller arguments
-    args = [
-        'main.py',                          # Main script
-        '--onefile',                        # Create a single executable
-        '--windowed',                       # Hide console window (GUI app)
-        '--name=XtoCHD',                    # Name of the executable
-        '--icon=icon.ico',                  # Icon file (if available)
-        '--add-data=chdman.exe;.',          # Include chdman.exe in the bundle
-        '--distpath=dist',                  # Output directory
-        '--workpath=build',                 # Build directory
-        '--specpath=.',                     # Spec file directory
-        '--clean',                          # Clean cache before building
-        '--noconfirm',                      # Overwrite output directory without asking
+    # Build the executable
+    cmd = [
+        "pyinstaller",
+        "--onefile",
+        "--windowed",
+        "--name=XtoCHD",
+        "--icon=icon.ico" if os.path.exists("icon.ico") else "",
+        "main.py"
     ]
     
-    # Remove icon argument if icon file doesn't exist
-    if not os.path.exists('icon.ico'):
-        args.remove('--icon=icon.ico')
+    # Remove empty icon parameter if no icon exists
+    cmd = [arg for arg in cmd if arg]
     
-    # Remove chdman.exe from bundle if it doesn't exist
-    if not os.path.exists('chdman.exe'):
-        args.remove('--add-data=chdman.exe;.')
+    print(f"Running: {' '.join(cmd)}")
+    subprocess.check_call(cmd)
     
-    print("Building XtoCHD executable...")
-    print(f"Arguments: {' '.join(args)}")
-    
-    try:
-        PyInstaller.__main__.run(args)
-        print("\nBuild completed successfully!")
-        print("Executable location: dist/XtoCHD.exe")
-        
-    except Exception as e:
-        print(f"Build failed: {e}")
-        return False
-    
-    return True
+    print("\nBuild complete!")
+    print("Executable created in: dist/XtoCHD.exe")
+    print("\nNote: Users will need to download chdman.exe separately and place it in the same folder.")
 
-if __name__ == '__main__':
-    build_exe() 
+if __name__ == "__main__":
+    main() 

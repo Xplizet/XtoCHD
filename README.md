@@ -1,12 +1,36 @@
-# XtoCHD
+# XtoCHD v2.0.0
 
-A simple GUI application to convert disk images to CHD format using chdman.
+A powerful GUI application to convert disk images to CHD format using chdman with advanced features and comprehensive statistics.
 
 ![XtoCHD Screenshot](screenshot.png)
 
 ## What is XtoCHD?
 
-XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img, .zip) to .CHD format. This is useful for retro gaming and emulation.
+XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img, .zip) to .CHD format. This is useful for retro gaming and emulation. Version 2.0.0 brings significant improvements in usability, reliability, and feature set.
+
+## ✨ New Features in v2.0.0
+
+### 🎯 Smart File Management
+- **Intelligent Duplicate Detection**: Automatically detects and prioritizes better formats (CUE > ISO > BIN > IMG)
+- **Skip Existing Files**: Automatically skips conversion if CHD files already exist
+- **Enhanced ZIP Support**: Smart extraction with existing file detection
+
+### 📊 Comprehensive Statistics
+- **Detailed Conversion Summary**: Shows success/failure/skip counts with percentages
+- **Size Statistics**: Tracks original vs compressed sizes, space saved, and compression ratios
+- **File Lists**: Complete lists of successful, failed, and skipped files
+
+### 🎮 Improved User Experience
+- **Stop Conversion**: Cancel running conversions with proper cleanup
+- **Auto-suggest Output**: Automatically suggests `[input]/CHD/` as output folder
+- **Status Bar**: Real-time progress messages and status updates
+- **Better UI States**: Proper button enabling/disabling during conversion
+
+### 🔧 Technical Improvements
+- **Enhanced Reliability**: Improved subprocess handling and error management
+- **Better Threading**: More responsive UI with proper thread management
+- **Automatic Directory Creation**: Creates output directories automatically
+- **Improved Error Handling**: Better error messages and user feedback
 
 ## Download
 
@@ -25,11 +49,13 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 ## How to Use
 
 1. **Select Input**: Choose a file or folder containing disk images
-2. **Select Output**: Pick where to save the converted .CHD files
+2. **Select Output**: Pick where to save the converted .CHD files (auto-suggests `[input]/CHD/`)
 3. **Set chdman Path**: The app will auto-detect `chdman.exe` if it's in the same folder, or you can manually browse to it
-4. **Scan Files**: Click "Scan for Files" to find compatible images
+4. **Scan Files**: Click "Scan for Files" to find compatible images (duplicates are automatically handled)
 5. **Select Files**: Check/uncheck which files to convert
-6. **Start Conversion**: Click "Start Conversion" and wait
+6. **Start Conversion**: Click "Start Conversion" and monitor progress
+7. **Stop if Needed**: Use the "Stop Conversion" button to cancel at any time
+8. **Review Results**: Check the comprehensive conversion summary at the end
 
 ## Supported Formats
 
@@ -42,8 +68,38 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 - chdman.exe (from MAME project) - will be auto-detected if in the same folder
 - No Python installation needed for the executable
 
+## Features
+
+### 🎯 Smart Processing
+- **Format Prioritization**: Automatically selects the best format when duplicates exist
+- **Existing File Detection**: Skips files that already have CHD versions
+- **Batch Processing**: Convert multiple files or entire folders at once
+- **ZIP Support**: Extract and convert files from ZIP archives
+
+### 📈 Comprehensive Reporting
+- **Success Rate**: Shows percentage of successful conversions
+- **Size Analysis**: Original vs compressed file sizes
+- **Space Savings**: Total space saved and compression ratios
+- **Detailed Lists**: Complete breakdown of all processed files
+
+### 🎮 User-Friendly Interface
+- **Real-time Progress**: Live status updates and progress tracking
+- **Intuitive Controls**: Easy-to-use interface with clear feedback
+- **Error Handling**: Clear error messages and recovery options
+- **Responsive Design**: UI remains responsive during long conversions
+
 ## Building from Source
 
+### For Developers
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the application
+python main.py
+```
+
+### Building Executable
 ```bash
 # Install dependencies
 pip install -r requirements.txt
@@ -51,6 +107,11 @@ pip install -r requirements.txt
 # Build executable
 python build_exe.py
 ```
+
+### Windows Users
+Simply double-click `build.bat` to build the executable automatically.
+
+The executable will be created in the `dist/` folder as `XtoCHD.exe`.
 
 ## Credits
 
@@ -75,4 +136,17 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 If you encounter issues:
 1. Make sure you have `chdman.exe` (download from MAME project)
 2. Ensure your input files are valid
-3. Create an issue on GitHub with details 
+3. Check the conversion summary for detailed error information
+4. Create an issue on GitHub with details
+
+## Changelog
+
+### v2.0.0
+- ✨ Added comprehensive conversion summary with statistics
+- 🎯 Implemented smart duplicate detection with format prioritization
+- 🛑 Added stop conversion functionality with proper cleanup
+- 📊 Enhanced progress tracking and status reporting
+- 🎨 Improved UI/UX with better button states and feedback
+- 🔧 Refactored subprocess handling for improved reliability
+- 📁 Auto-suggest output folder functionality
+- 🗂️ Enhanced ZIP file processing with existing file detection 
