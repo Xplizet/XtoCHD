@@ -7,38 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- **Advanced File Management System** (currently in development, disabled by default)
-  - All advanced file management features are now off by default; users must enable them in the Advanced Settings dialog.
-  - Modern popup dialog for advanced settings, with clear grouping and improved usability.
-  - Clickable placeholders for custom naming schemes; clicking inserts at cursor position.
-  - Live-updating example for naming scheme and organization path as user edits.
-  - Master enable/disable checkbox to turn all advanced file management features on or off at once.
-  - Smart system detection from filename patterns (PlayStation, PS2, Saturn, Dreamcast, N64, GameCube, Wii, Xbox, Xbox 360, PC Engine, Neo Geo, Arcade)
-  - Metadata extraction from CUE files (game titles, regions)
-  - Region detection from filename patterns (USA, Europe, Japan, Asia, World)
-  - Custom naming schemes with placeholders: `[System]`, `[Title]`, `[Region]`, `[Original]`
-  - Smart folder organization by system and/or region
-  - Automatic directory creation for organized output structure
-  - Smart filename cleaning (removes invalid characters, normalizes spacing)
-  - Support for all chdman-compatible formats: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .m3u, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk (with .flac and .wav supported only as part of a .cue set, not as standalone input)
-
-### Changed
-- Enhanced file conversion process to use smart naming and organization
-- Updated GUI to include "Advanced File Management Settings" button
-- Improved file handling with metadata-aware processing
-- File/folder scanning is now done in a background thread with proper Qt signals/slots, preventing crashes when selecting files or folders.
-- All UI updates from scanning are now safely performed in the main thread.
-
-### Technical
-- Added `SYSTEM_PATTERNS` dictionary for system detection
-- Implemented `detect_system_from_filename()` method
-- Implemented `extract_metadata_from_cue()` method
-- Implemented `detect_region_from_filename()` method
-- Implemented `generate_smart_filename()` method
-- Implemented `get_organized_output_path()` method
-- Added `FileManagementSettingsDialog` class for user configuration
-- Enhanced `ConversionWorker` with file management settings support
+- Advanced file management features (naming schemes, organization, system/region detection, etc.) have been removed for now due to reliability concerns. I may revisit these features in a future version.
 
 ## [v2.1.0] - 2025-07-04
 
