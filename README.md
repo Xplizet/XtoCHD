@@ -69,6 +69,30 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 - **Smart Duplicate Detection**: Handles multiple formats of the same content
 - **Enhanced ZIP Support**: Smart extraction with existing file detection
 
+## 🚧 Upcoming / In Development
+
+A new **Advanced File Management** system is currently in development and will be available in a future release. Highlights include:
+
+- Modern popup dialog for advanced settings, with clear grouping and improved usability
+- Clickable placeholders for custom naming schemes (insert at cursor)
+- Live-updating example for naming scheme and organization path as you edit
+- Master enable/disable checkbox to turn all advanced file management features on or off at once
+- All advanced features are **off by default** and must be enabled by the user
+- See [CHANGELOG.md](CHANGELOG.md) for full details
+
+**What is the Advanced File Management system?**
+
+This system lets you automatically organize, rename, and sort your converted CHD files based on game system, region, and title. You can:
+
+- **Customize file names** using placeholders like `[System]`, `[Title]`, `[Region]`, and `[Original]`.
+  - *Example*: If you set the naming scheme to `[System] [Title] (Region)`, a file might be named `PlayStation Final Fantasy VII (USA).chd`.
+- **Organize output folders** by system and region.
+  - *Example*: With both options enabled, a file could be saved as `Output/PlayStation/USA/Final Fantasy VII.chd`.
+
+These features are optional and designed for users who want more control over how their converted files are named and organized. By default, advanced file management is off, so the app works simply unless you enable these options.
+
+*Note: These features are not yet released and are subject to change before the next version.*
+
 ## Building from Source
 
 ### For Developers
