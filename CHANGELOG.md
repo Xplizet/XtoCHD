@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Smart folder organization by system and/or region
   - Automatic directory creation for organized output structure
   - Smart filename cleaning (removes invalid characters, normalizes spacing)
+  - Support for all chdman-compatible formats: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .m3u, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk (with .flac and .wav supported only as part of a .cue set, not as standalone input)
 
 ### Changed
 - Enhanced file conversion process to use smart naming and organization
