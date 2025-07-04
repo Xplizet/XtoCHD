@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Advanced file management features (naming schemes, organization, system/region detection, etc.) have been removed for now due to reliability concerns. I may revisit these features in a future version.
+- Support for all chdman-compatible formats: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .m3u, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk (with .flac and .wav supported only as part of a .cue set, not as standalone input)
+- File/folder scanning is now done in a background thread with proper Qt signals/slots, preventing crashes when selecting files or folders.
+- All UI updates from scanning are now safely performed in the main thread.
 
 ## [v2.1.0] - 2025-07-04
 
