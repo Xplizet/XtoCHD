@@ -1,4 +1,4 @@
-# XtoCHD v2.0.0
+# XtoCHD
 
 A powerful GUI application to convert disk images to CHD format using chdman with advanced features and comprehensive statistics.
 
@@ -6,31 +6,7 @@ A powerful GUI application to convert disk images to CHD format using chdman wit
 
 ## What is XtoCHD?
 
-XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img, .zip) to .CHD format. This is useful for retro gaming and emulation. Version 2.0.0 brings significant improvements in usability, reliability, and feature set.
-
-## ✨ New Features in v2.0.0
-
-### 🎯 Smart File Management
-- **Intelligent Duplicate Detection**: Automatically detects and prioritizes better formats (CUE > ISO > BIN > IMG)
-- **Skip Existing Files**: Automatically skips conversion if CHD files already exist
-- **Enhanced ZIP Support**: Smart extraction with existing file detection
-
-### 📊 Comprehensive Statistics
-- **Detailed Conversion Summary**: Shows success/failure/skip counts with percentages
-- **Size Statistics**: Tracks original vs compressed sizes, space saved, and compression ratios
-- **File Lists**: Complete lists of successful, failed, and skipped files
-
-### 🎮 Improved User Experience
-- **Stop Conversion**: Cancel running conversions with proper cleanup
-- **Auto-suggest Output**: Automatically suggests `[input]/CHD/` as output folder
-- **Status Bar**: Real-time progress messages and status updates
-- **Better UI States**: Proper button enabling/disabling during conversion
-
-### 🔧 Technical Improvements
-- **Enhanced Reliability**: Improved subprocess handling and error management
-- **Better Threading**: More responsive UI with proper thread management
-- **Automatic Directory Creation**: Creates output directories automatically
-- **Improved Error Handling**: Better error messages and user feedback
+XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img, .zip) to .CHD format. This is useful for retro gaming and emulation. The application provides a user-friendly interface with advanced features for batch processing and detailed conversion reporting.
 
 ## Download
 
@@ -87,6 +63,12 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 - **Error Handling**: Clear error messages and recovery options
 - **Responsive Design**: UI remains responsive during long conversions
 
+### 🔧 Advanced Features
+- **Stop Conversion**: Cancel running conversions with proper cleanup
+- **Auto-suggest Output**: Automatically suggests output folder location
+- **Smart Duplicate Detection**: Handles multiple formats of the same content
+- **Enhanced ZIP Support**: Smart extraction with existing file detection
+
 ## Building from Source
 
 ### For Developers
@@ -139,16 +121,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 If you encounter issues:
 1. Ensure your input files are valid
 2. Check the conversion summary for detailed error information
-3. Create an issue on GitHub with details
-
-## Changelog
-
-### v2.0.0
-- ✨ Added comprehensive conversion summary with statistics
-- 🎯 Implemented smart duplicate detection with format prioritization
-- 🛑 Added stop conversion functionality with proper cleanup
-- 📊 Enhanced progress tracking and status reporting
-- 🎨 Improved UI/UX with better button states and feedback
-- 🔧 Refactored subprocess handling for improved reliability
-- 📁 Auto-suggest output folder functionality
-- 🗂️ Enhanced ZIP file processing with existing file detection 
+3. Create an issue on GitHub with details 
