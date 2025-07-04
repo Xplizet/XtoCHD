@@ -37,8 +37,7 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 ### For End Users (No Installation Required)
 1. Download the latest release from the [Releases](https://github.com/yourusername/XtoCHD/releases) page
 2. Extract the ZIP file
-3. Download `chdman.exe` from the [MAME project](https://www.mamedev.org/) and place it in the same folder as `XtoCHD.exe`
-4. Double-click `XtoCHD.exe` to run
+3. Double-click `XtoCHD.exe` to run (chdman.exe is included)
 
 ### For Developers
 1. Clone this repository
@@ -65,8 +64,8 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 ## Requirements
 
 - Windows 10/11
-- chdman.exe (from MAME project) - will be auto-detected if in the same folder
 - No Python installation needed for the executable
+- chdman.exe is included in the release (from MAME project)
 
 ## Features
 
@@ -113,12 +112,16 @@ Simply double-click `build.bat` to build the executable automatically.
 
 The executable will be created in the `dist/` folder as `XtoCHD.exe`.
 
+**Note**: The build process will include chdman.exe in the distribution.
+
 ## Credits
 
 This application relies on **chdman** from the [MAME project](https://www.mamedev.org/). Special thanks to the MAME development team for creating and maintaining this essential tool.
 
 - **chdman**: Part of the MAME project - [GitHub](https://github.com/mamedev/mame)
 - **MAME**: Multiple Arcade Machine Emulator
+
+**Note**: chdman.exe is included in this distribution for user convenience. It is free software from the MAME project and is used in accordance with their license terms.
 
 ## License
 
@@ -134,10 +137,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 If you encounter issues:
-1. Make sure you have `chdman.exe` (download from MAME project)
-2. Ensure your input files are valid
-3. Check the conversion summary for detailed error information
-4. Create an issue on GitHub with details
+1. Ensure your input files are valid
+2. Check the conversion summary for detailed error information
+3. Create an issue on GitHub with details
 
 ## Changelog
 

@@ -31,6 +31,17 @@ echo.
 echo Build completed successfully!
 echo Executable created in: dist\XtoCHD.exe
 echo.
-echo Note: Users will need to download chdman.exe separately and place it in the same folder.
+
+REM Check if chdman.exe exists and copy it
+if exist "chdman.exe" (
+    copy "chdman.exe" "dist\chdman.exe" >nul
+    echo chdman.exe copied to dist\ folder
+    echo.
+    echo Distribution ready in dist\ folder!
+) else (
+    echo Warning: chdman.exe not found in current directory
+    echo Please download chdman.exe from the MAME project and place it in the dist\ folder
+)
+
 echo.
 pause 

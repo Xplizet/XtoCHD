@@ -42,7 +42,16 @@ def main():
     
     print("\nBuild complete!")
     print("Executable created in: dist/XtoCHD.exe")
-    print("\nNote: Users will need to download chdman.exe separately and place it in the same folder.")
+    
+    # Copy chdman.exe if it exists
+    if os.path.exists("chdman.exe"):
+        shutil.copy2("chdman.exe", "dist/chdman.exe")
+        print("chdman.exe copied to dist/ folder")
+    else:
+        print("\nWarning: chdman.exe not found in current directory")
+        print("Please download chdman.exe from the MAME project and place it in the dist/ folder")
+    
+    print("\nDistribution ready in dist/ folder!")
 
 if __name__ == "__main__":
     main() 
