@@ -79,6 +79,7 @@ A new **Advanced File Management** system is currently in development and will b
 - Master enable/disable checkbox to turn all advanced file management features on or off at once
 - All advanced features are **off by default** and must be enabled by the user
 - See [CHANGELOG.md](CHANGELOG.md) for full details
+- Support for all chdman-compatible formats: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .m3u, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk (with .flac and .wav supported only as part of a .cue set, not as standalone input)
 
 **What is the Advanced File Management system?**
 
