@@ -13,7 +13,7 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 ### For End Users (No Installation Required)
 1. Download the latest release from the [Releases](https://github.com/yourusername/XtoCHD/releases) page
 2. Extract the ZIP file
-3. Make sure `chdman.exe` is in the same folder as `XtoCHD.exe`
+3. Download `chdman.exe` from the [MAME project](https://www.mamedev.org/) and place it in the same folder as `XtoCHD.exe`
 4. Double-click `XtoCHD.exe` to run
 
 ### For Developers
@@ -26,7 +26,7 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 
 1. **Select Input**: Choose a file or folder containing disk images
 2. **Select Output**: Pick where to save the converted .CHD files
-3. **Set chdman Path**: Point to your chdman.exe file
+3. **Set chdman Path**: The app will auto-detect `chdman.exe` if it's in the same folder, or you can manually browse to it
 4. **Scan Files**: Click "Scan for Files" to find compatible images
 5. **Select Files**: Check/uncheck which files to convert
 6. **Start Conversion**: Click "Start Conversion" and wait
@@ -39,7 +39,7 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 ## Requirements
 
 - Windows 10/11
-- chdman.exe (from MAME project)
+- chdman.exe (from MAME project) - will be auto-detected if in the same folder
 - No Python installation needed for the executable
 
 ## Building from Source
@@ -73,6 +73,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 If you encounter issues:
-1. Check that chdman.exe is in the same folder
+1. Make sure you have `chdman.exe` (download from MAME project)
 2. Ensure your input files are valid
 3. Create an issue on GitHub with details 

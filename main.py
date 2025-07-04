@@ -224,6 +224,24 @@ class CHDConverterGUI(QWidget):
         self.found_files = []
         self.conversion_worker = None
         self.scan_worker = None
+        self.auto_detect_chdman()
+
+    def auto_detect_chdman(self):
+        """Auto-detect chdman.exe in the same directory as the application"""
+        # Check if chdman.exe exists in the same directory as the application
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        chdman_in_app_dir = os.path.join(app_dir, 'chdman.exe')
+        
+        if os.path.isfile(chdman_in_app_dir):
+            self.chdman_path_edit.setText(chdman_in_app_dir)
+        else:
+            # Fallback to current working directory
+            chdman_in_cwd = os.path.join(os.getcwd(), 'chdman.exe')
+            if os.path.isfile(chdman_in_cwd):
+                self.chdman_path_edit.setText(chdman_in_cwd)
+            else:
+                # Default to empty if not found
+                self.chdman_path_edit.setText('')
 
     def init_ui(self):
         layout = QVBoxLayout()
@@ -250,7 +268,7 @@ class CHDConverterGUI(QWidget):
 
         # chdman path
         chdman_layout = QHBoxLayout()
-        self.chdman_path_edit = QLineEdit(os.path.join(os.getcwd(), 'chdman.exe'))
+        self.chdman_path_edit = QLineEdit()
         chdman_btn = QPushButton('Select chdman.exe')
         chdman_btn.clicked.connect(self.select_chdman)
         chdman_layout.addWidget(QLabel('chdman.exe:'))
