@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced file conversion process to use smart naming and organization
 - Updated GUI to include "Advanced File Management Settings" button
 - Improved file handling with metadata-aware processing
+- File/folder scanning is now done in a background thread with proper Qt signals/slots, preventing crashes when selecting files or folders.
+- All UI updates from scanning are now safely performed in the main thread.
 
 ### Technical
 - Added `SYSTEM_PATTERNS` dictionary for system detection
