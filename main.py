@@ -6,15 +6,36 @@ import zipfile
 import subprocess
 import threading
 import time
+import re
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QFileDialog, QTextEdit, QProgressBar, QListWidget, QListWidgetItem, QCheckBox,
-    QScrollArea, QFrame, QDialog, QButtonGroup, QRadioButton, QStatusBar
+    QScrollArea, QFrame, QDialog, QButtonGroup, QRadioButton, QStatusBar, QGroupBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
-COMPATIBLE_EXTS = {'.cue', '.bin', '.iso', '.img', '.zip'}
+COMPATIBLE_EXTS = {
+    '.cue', '.bin', '.iso', '.img', '.nrg', '.gdi', '.toc', '.ccd', '.m3u', '.vcd',
+    '.chd', '.zip', '.cdr', '.hdi', '.vhd', '.vmdk', '.dsk'
+}
 DISK_IMAGE_EXTS = {'.cue', '.bin', '.iso', '.img'}
+
+# System detection patterns
+SYSTEM_PATTERNS = {
+    'PlayStation': [r'psx', r'playstation', r'ps1', r'ps-1'],
+    'PlayStation 2': [r'ps2', r'playstation2', r'ps-2'],
+    'Sega Saturn': [r'saturn', r'sega\s*saturn', r'ss'],
+    'Sega Dreamcast': [r'dreamcast', r'dc', r'sega\s*dreamcast'],
+    'Nintendo 64': [r'n64', r'nintendo\s*64', r'nintendo64'],
+    'GameCube': [r'gamecube', r'gc', r'ngc'],
+    'Wii': [r'wii'],
+    'Xbox': [r'xbox'],
+    'Xbox 360': [r'xbox\s*360', r'x360'],
+    'PC Engine': [r'pc\s*engine', r'turbografx', r'pce'],
+    'Neo Geo': [r'neo\s*geo', r'neogeo', r'ng'],
+    'Arcade': [r'arcade', r'mame', r'fba'],
+    'Unknown': []
+}
 
 class ConversionWorker(QThread):
     progress_updated = pyqtSignal(int)
@@ -255,18 +276,8 @@ class ConversionWorker(QThread):
         """Convert a single disk image file to CHD"""
         if self.check_cancelled():
             return
-            
-        base_name = os.path.splitext(os.path.basename(file_path))[0]
-        chd_file = os.path.join(self.output_dir, base_name + '.chd')
         ext = os.path.splitext(file_path)[1].lower()
-        
-        # Check if CHD file already exists
-        if os.path.exists(chd_file):
-            self.log_updated.emit(f'Skipped: {os.path.basename(file_path)} (CHD already exists)')
-            self.progress_text.emit(f"⏭ Skipped: {base_name} (already exists)")
-            self.conversion_stats['skipped_files'] += 1
-            self.conversion_stats['skipped_files_list'].append(os.path.basename(file_path))
-            return
+        base_name = os.path.basename(file_path)
         
         self.log_updated.emit(f'Converting: {file_path}')
         self.progress_text.emit(f"Converting {base_name} to CHD format...")
@@ -277,20 +288,16 @@ class ConversionWorker(QThread):
         
         try:
             if ext == '.cue':
-                cmd = [self.chdman_path, 'createcd', '-i', file_path, '-o', chd_file]
+                cmd = [self.chdman_path, 'createcd', '-i', file_path, '-o', file_path + '.chd']
             elif ext in {'.iso', '.bin', '.img'}:
-                cmd = [self.chdman_path, 'createcd', '-i', file_path, '-o', chd_file]
+                cmd = [self.chdman_path, 'createcd', '-i', file_path, '-o', file_path + '.chd']
             else:
                 self.log_updated.emit(f'Skipped unsupported file: {file_path}')
                 self.conversion_stats['failed_conversions'] += 1
                 self.conversion_stats['failed_files'].append(os.path.basename(file_path))
-                self.current_chd_file = None
                 return
                 
             # Use CREATE_NO_WINDOW to hide the CMD window
-            self.progress_text.emit(f"Running CHD conversion on {base_name}...")
-            
-            # Use subprocess.run like the original working version
             self.progress_text.emit(f"Running CHD conversion on {base_name}...")
             
             result = subprocess.run(cmd, capture_output=True, text=True, 
@@ -304,7 +311,7 @@ class ConversionWorker(QThread):
             
             if result_code == 0:
                 # Get compressed file size
-                compressed_size = os.path.getsize(chd_file)
+                compressed_size = os.path.getsize(file_path + '.chd')
                 self.conversion_stats['compressed_size'] += compressed_size
                 
                 # Add to successful conversions
@@ -315,14 +322,14 @@ class ConversionWorker(QThread):
                     'compressed_size_mb': compressed_size / (1024**2)
                 })
                 
-                self.log_updated.emit(f'Success: {chd_file}')
+                self.log_updated.emit(f'Success: {file_path + ".chd"}')
                 self.progress_text.emit(f"✓ Completed: {base_name}.chd")
             else:
                 # Remove incomplete CHD file on failure
-                if os.path.exists(chd_file):
+                if os.path.exists(file_path + '.chd'):
                     try:
-                        os.remove(chd_file)
-                        self.log_updated.emit(f'Removed incomplete file: {os.path.basename(chd_file)}')
+                        os.remove(file_path + '.chd')
+                        self.log_updated.emit(f'Removed incomplete file: {os.path.basename(file_path + ".chd")}')
                     except Exception as e:
                         self.log_updated.emit(f'Could not remove incomplete file: {e}')
                 
@@ -333,10 +340,10 @@ class ConversionWorker(QThread):
                 
         except Exception as e:
             # Remove incomplete CHD file on exception
-            if os.path.exists(chd_file):
+            if os.path.exists(file_path + '.chd'):
                 try:
-                    os.remove(chd_file)
-                    self.log_updated.emit(f'Removed incomplete file: {os.path.basename(chd_file)}')
+                    os.remove(file_path + '.chd')
+                    self.log_updated.emit(f'Removed incomplete file: {os.path.basename(file_path + ".chd")}')
                 except Exception as cleanup_error:
                     self.log_updated.emit(f'Could not remove incomplete file: {cleanup_error}')
             
@@ -365,72 +372,25 @@ class ScanWorker(QThread):
         
     def run(self):
         try:
-            self.scan_progress.emit('Scanning for compatible files...')
-            found_files = self.scan_files(self.input_path)
-            
-            # Remove duplicates and prioritize better formats
-            deduplicated_files = self.remove_duplicates(found_files)
-            
-            self.scan_complete.emit(deduplicated_files)
+            self.scan_progress.emit('Scanning for files...')
+            found = []
+            if os.path.isfile(self.input_path):
+                ext = os.path.splitext(self.input_path)[1].lower()
+                if ext in COMPATIBLE_EXTS:
+                    found.append(self.input_path)
+                    self.scan_progress.emit(f'Found: {os.path.basename(self.input_path)}')
+            else:
+                for root, dirs, files in os.walk(self.input_path):
+                    dirs[:] = [d for d in dirs if not d.startswith('.')]
+                    for fname in files:
+                        ext = os.path.splitext(fname)[1].lower()
+                        if ext in COMPATIBLE_EXTS:
+                            fpath = os.path.join(root, fname)
+                            found.append(fpath)
+                            self.scan_progress.emit(f'Found: {os.path.basename(fpath)}')
+            self.scan_complete.emit(found)
         except Exception as e:
             self.scan_error.emit(f'Scan error: {e}')
-    
-    def remove_duplicates(self, files):
-        """Remove duplicates and prioritize better formats"""
-        # Group files by base name (without extension)
-        file_groups = {}
-        
-        for file_path in files:
-            base_name = os.path.splitext(os.path.basename(file_path))[0]
-            ext = os.path.splitext(file_path)[1].lower()
-            
-            if base_name not in file_groups:
-                file_groups[base_name] = []
-            
-            file_groups[base_name].append((file_path, ext))
-        
-        # For each group, select the best format
-        deduplicated = []
-        for base_name, file_list in file_groups.items():
-            if len(file_list) == 1:
-                # Only one file, use it
-                deduplicated.append(file_list[0][0])
-            else:
-                # Multiple files, prioritize by format
-                best_file = self.select_best_format(file_list)
-                deduplicated.append(best_file)
-        
-        return deduplicated
-    
-    def select_best_format(self, file_list):
-        """Select the best format from a list of files with the same base name"""
-        # Priority order: .cue > .iso > .bin > .img > .zip
-        priority_order = ['.cue', '.iso', '.bin', '.img', '.zip']
-        
-        # Sort files by priority
-        sorted_files = sorted(file_list, key=lambda x: priority_order.index(x[1]) if x[1] in priority_order else 999)
-        
-        # Return the highest priority file
-        return sorted_files[0][0]
-
-    def scan_files(self, path):
-        found_files = []
-        if os.path.isfile(path):
-            ext = os.path.splitext(path)[1].lower()
-            if ext in COMPATIBLE_EXTS:
-                found_files.append(path)
-        else:
-            # Use faster directory scanning
-            for root, dirs, files in os.walk(path):
-                # Skip hidden directories for speed
-                dirs[:] = [d for d in dirs if not d.startswith('.')]
-                
-                for fname in files:
-                    ext = os.path.splitext(fname)[1].lower()
-                    if ext in COMPATIBLE_EXTS:
-                        fpath = os.path.join(root, fname)
-                        found_files.append(fpath)
-        return found_files
 
 class InputSelectionDialog(QDialog):
     def __init__(self, parent=None):
@@ -478,13 +438,15 @@ class CHDConverterGUI(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('XtoCHD - Batch CHD Converter')
-        self.setGeometry(100, 100, 1000, 700)
-        self.init_ui()
+        self.setGeometry(100, 100, 1100, 700)
         self.temp_dirs = []
         self.found_files = []
         self.conversion_worker = None
         self.scan_worker = None
+        self.init_ui()
         self.auto_detect_chdman()
+        # Drag-and-drop support
+        self.setAcceptDrops(True)
 
     def auto_detect_chdman(self):
         """Auto-detect chdman.exe in the same directory as the application"""
@@ -503,126 +465,168 @@ class CHDConverterGUI(QWidget):
                 # Default to empty if not found
                 self.chdman_path_edit.setText('')
 
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        paths = [url.toLocalFile() for url in event.mimeData().urls()]
+        if paths:
+            path = paths[0]
+            self.input_path_edit.setText(path)
+            self.auto_suggest_output_folder(path)
+            self.status_bar.showMessage('Scanning for files...')
+            self.scan_for_files_auto(path)
+
     def init_ui(self):
         layout = QVBoxLayout()
-
+        layout.setSpacing(16)
+        layout.setContentsMargins(16, 16, 16, 16)
         # Input path
         input_layout = QHBoxLayout()
         self.input_path_edit = QLineEdit()
-        self.input_btn = QPushButton('Select File/Folder')
-        self.input_btn.clicked.connect(self.select_input)
+        self.add_file_btn = QPushButton('Add File')
+        self.add_folder_btn = QPushButton('Add Folder')
+        for btn in (self.add_file_btn, self.add_folder_btn):
+            btn.setMinimumHeight(28)
+            btn.setMinimumWidth(110)
+        self.add_file_btn.clicked.connect(self.select_input_file)
+        self.add_folder_btn.clicked.connect(self.select_input_folder)
         input_layout.addWidget(QLabel('Input:'))
         input_layout.addWidget(self.input_path_edit)
-        input_layout.addWidget(self.input_btn)
+        input_layout.addWidget(self.add_file_btn)
+        input_layout.addWidget(self.add_folder_btn)
         layout.addLayout(input_layout)
 
         # Output path
         output_layout = QHBoxLayout()
         self.output_path_edit = QLineEdit()
         self.output_btn = QPushButton('Select Output Folder')
+        self.output_btn.setMinimumHeight(28)
         self.output_btn.clicked.connect(self.select_output)
+        # Open Output Folder button
+        self.open_output_btn = QPushButton('Open Output Folder')
+        self.open_output_btn.setMinimumHeight(28)
+        self.open_output_btn.clicked.connect(self.open_output_folder)
         output_layout.addWidget(QLabel('Output:'))
         output_layout.addWidget(self.output_path_edit)
         output_layout.addWidget(self.output_btn)
+        output_layout.addWidget(self.open_output_btn)
         layout.addLayout(output_layout)
 
         # chdman path
         chdman_layout = QHBoxLayout()
         self.chdman_path_edit = QLineEdit()
         self.chdman_btn = QPushButton('Select chdman.exe')
+        self.chdman_btn.setMinimumHeight(28)
         self.chdman_btn.clicked.connect(self.select_chdman)
         chdman_layout.addWidget(QLabel('chdman.exe:'))
         chdman_layout.addWidget(self.chdman_path_edit)
         chdman_layout.addWidget(self.chdman_btn)
         layout.addLayout(chdman_layout)
 
-
-
-
-
-        # Scan button
-        self.scan_btn = QPushButton('Scan for Files')
-        self.scan_btn.clicked.connect(self.scan_for_files)
-        layout.addWidget(self.scan_btn)
-
         # File list section
         file_list_label = QLabel('Files to Convert:')
         layout.addWidget(file_list_label)
-        
-        # File list with checkboxes
+        # File list with checkboxes and sizes
         self.file_list = QListWidget()
         layout.addWidget(self.file_list)
-        
         # Select all/none buttons
         select_buttons_layout = QHBoxLayout()
         self.select_all_btn = QPushButton('Select All')
+        self.select_all_btn.setMinimumHeight(28)
         self.select_all_btn.clicked.connect(self.select_all_files)
         self.select_none_btn = QPushButton('Select None')
+        self.select_none_btn.setMinimumHeight(28)
         self.select_none_btn.clicked.connect(self.select_none_files)
         select_buttons_layout.addWidget(self.select_all_btn)
         select_buttons_layout.addWidget(self.select_none_btn)
         select_buttons_layout.addStretch()
         layout.addLayout(select_buttons_layout)
-
         # Start/Stop buttons
         button_layout = QHBoxLayout()
         self.start_btn = QPushButton('Start Conversion')
+        self.start_btn.setMinimumHeight(28)
         self.start_btn.clicked.connect(self.start_conversion)
         self.start_btn.setEnabled(False)
-        
         self.stop_btn = QPushButton('Stop Conversion')
+        self.stop_btn.setMinimumHeight(28)
         self.stop_btn.clicked.connect(self.stop_conversion)
         self.stop_btn.setEnabled(False)
-        
         button_layout.addWidget(self.start_btn)
         button_layout.addWidget(self.stop_btn)
         layout.addLayout(button_layout)
-
         # Progress bar
         self.progress_bar = QProgressBar()
         layout.addWidget(self.progress_bar)
-
         # Log area
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
         layout.addWidget(QLabel('Log:'))
         layout.addWidget(self.log_area)
-
         # Status bar at bottom
         self.status_bar = QStatusBar()
         self.status_bar.showMessage('Ready to convert')
         layout.addWidget(self.status_bar)
-
         self.setLayout(layout)
 
-    def select_input(self):
-        # Show selection dialog first
-        dialog = InputSelectionDialog(self)
-        if dialog.exec_() == QDialog.Accepted:
-            selection_type = dialog.get_selection_type()
-            
-            options = QFileDialog.Options()
-            
-            if selection_type == "file":
-                # File selection
-                file, _ = QFileDialog.getOpenFileName(
-                    self, 'Select File', '', 
-                    'Compatible Files (*.cue *.bin *.iso *.img *.zip);;All Files (*)', 
-                    options=options
-                )
-                if file:
-                    self.input_path_edit.setText(file)
-                    # Auto-suggest output folder
-                    self.auto_suggest_output_folder(file)
-            else:
-                # Folder selection
-                folder = QFileDialog.getExistingDirectory(
-                    self, 'Select Folder', '', options=options
-                )
-                if folder:
-                    self.input_path_edit.setText(folder)
-                    # Auto-suggest output folder
-                    self.auto_suggest_output_folder(folder)
+    def open_output_folder(self):
+        import os
+        import subprocess
+        folder = self.output_path_edit.text().strip()
+        if folder and os.path.isdir(folder):
+            if os.name == 'nt':
+                os.startfile(folder)
+            elif os.name == 'posix':
+                subprocess.Popen(['xdg-open', folder])
+
+    def select_input_file(self):
+        options = QFileDialog.Options()
+        file, _ = QFileDialog.getOpenFileName(self, 'Select File', '',
+            'Compatible Files (*.cue *.bin *.iso *.img *.zip *.nrg *.gdi *.toc *.ccd *.m3u *.vcd *.chd *.cdr *.hdi *.vhd *.vmdk *.dsk);;All Files (*)', options=options)
+        if file:
+            self.input_path_edit.setText(file)
+            self.auto_suggest_output_folder(file)
+            self.status_bar.showMessage('Scanning for files...')
+            self.scan_for_files_auto(file)
+
+    def select_input_folder(self):
+        options = QFileDialog.Options()
+        folder = QFileDialog.getExistingDirectory(self, 'Select Folder', '', options=options)
+        if folder:
+            self.input_path_edit.setText(folder)
+            self.auto_suggest_output_folder(folder)
+            self.status_bar.showMessage('Scanning for files...')
+            self.scan_for_files_auto(folder)
+
+    def scan_for_files_auto(self, input_path):
+        # Use ScanWorker (QThread) for safe background scanning
+        if not input_path or not os.path.exists(input_path):
+            self.status_bar.showMessage('Invalid input path.')
+            return
+        self.found_files = []
+        self.file_list.clear()
+        self.start_btn.setEnabled(False)
+        self.status_bar.showMessage('Scanning for files...')
+        # If a previous scan_worker exists, clean up
+        if hasattr(self, 'scan_worker') and self.scan_worker is not None:
+            self.scan_worker.quit()
+            self.scan_worker.wait()
+        self.scan_worker = ScanWorker(input_path)
+        self.scan_worker.scan_progress.connect(self.status_bar.showMessage)
+        self.scan_worker.scan_complete.connect(self.scan_completed)
+        self.scan_worker.scan_error.connect(self.scan_error)
+        self.scan_worker.start()
+
+    def scan_completed(self, found_files):
+        self.found_files = found_files
+        self.populate_file_list()
+        self.status_bar.showMessage(f'Scan complete: {len(found_files)} file(s) found.')
+        self.start_btn.setEnabled(len(found_files) > 0)
+
+    def scan_error(self, error_msg):
+        self.status_bar.showMessage(error_msg)
+        self.start_btn.setEnabled(False)
 
     def auto_suggest_output_folder(self, input_path):
         """Auto-suggest output folder as [input_path]/CHD/ without creating it"""
@@ -653,49 +657,18 @@ class CHDConverterGUI(QWidget):
         file, _ = QFileDialog.getOpenFileName(self, 'Select chdman.exe', '', 'Executable (*.exe);;All Files (*)', options=options)
         if file:
             self.chdman_path_edit.setText(file)
-
-    def scan_for_files(self):
-        input_path = self.input_path_edit.text().strip()
-        if not input_path or not os.path.exists(input_path):
-            self.log_area.append('Invalid input path.')
-            return
-        
-        # Disable scan button during scanning
-        self.sender().setEnabled(False)
-        self.log_area.append('Starting scan...')
-        
-        # Start scan in background thread
-        self.scan_worker = ScanWorker(input_path)
-        self.scan_worker.scan_progress.connect(self.log_area.append)
-        self.scan_worker.scan_complete.connect(self.scan_completed)
-        self.scan_worker.scan_error.connect(self.scan_error)
-        self.scan_worker.start()
-
-    def scan_completed(self, found_files):
-        self.found_files = found_files
-        self.populate_file_list()
-        self.log_area.append(f'Found {len(self.found_files)} compatible files.')
-        self.start_btn.setEnabled(len(self.found_files) > 0)
-        
-        # Re-enable scan button
-        for child in self.children():
-            if isinstance(child, QPushButton) and child.text() == 'Scan for Files':
-                child.setEnabled(True)
-                break
-
-    def scan_error(self, error_msg):
-        self.log_area.append(error_msg)
-        # Re-enable scan button
-        for child in self.children():
-            if isinstance(child, QPushButton) and child.text() == 'Scan for Files':
-                child.setEnabled(True)
-                break
-
+    
     def populate_file_list(self):
         self.file_list.clear()
         for file_path in self.found_files:
             item = QListWidgetItem()
-            checkbox = QCheckBox(os.path.basename(file_path))
+            try:
+                size = os.path.getsize(file_path)
+                size_mb = size / (1024 * 1024)
+                size_str = f" ({size_mb:.2f} MB)"
+            except Exception:
+                size_str = ""
+            checkbox = QCheckBox(os.path.basename(file_path) + size_str)
             checkbox.setChecked(True)
             checkbox.setToolTip(file_path)
             self.file_list.addItem(item)
@@ -749,16 +722,16 @@ class CHDConverterGUI(QWidget):
         self.conversion_worker = ConversionWorker(selected_files, output_path, chdman_path)
         self.conversion_worker.progress_updated.connect(self.progress_bar.setValue)
         self.conversion_worker.progress_text.connect(self.status_bar.showMessage)
-        self.conversion_worker.log_updated.connect(self.log_area.append)
+        self.conversion_worker.log_updated.connect(self.log_area_append)
         self.conversion_worker.conversion_finished.connect(self.conversion_completed)
         self.conversion_worker.start()
 
     def disable_ui_during_conversion(self):
         """Disable all UI elements except stop button during conversion"""
-        self.input_btn.setEnabled(False)
+        self.add_file_btn.setEnabled(False)
+        self.add_folder_btn.setEnabled(False)
         self.output_btn.setEnabled(False)
         self.chdman_btn.setEnabled(False)
-        self.scan_btn.setEnabled(False)
         self.select_all_btn.setEnabled(False)
         self.select_none_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
@@ -767,10 +740,10 @@ class CHDConverterGUI(QWidget):
 
     def enable_ui_after_conversion(self):
         """Re-enable all UI elements after conversion"""
-        self.input_btn.setEnabled(True)
+        self.add_file_btn.setEnabled(True)
+        self.add_folder_btn.setEnabled(True)
         self.output_btn.setEnabled(True)
         self.chdman_btn.setEnabled(True)
-        self.scan_btn.setEnabled(True)
         self.select_all_btn.setEnabled(True)
         self.select_none_btn.setEnabled(True)
         self.start_btn.setEnabled(True)
@@ -810,6 +783,10 @@ class CHDConverterGUI(QWidget):
         self.temp_dirs = []
         if cleaned_count > 0:
             self.log_area.append(f'Cleaned up {cleaned_count} temporary directories.')
+
+    def log_area_append(self, text):
+        self.log_area.append(text)
+        self.log_area.moveCursor(self.log_area.textCursor().End)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

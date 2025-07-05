@@ -5,9 +5,9 @@ All notable changes to XtoCHD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v2.2.0] - 2024-07-05
 
-- Advanced file management features (naming schemes, organization, system/region detection, etc.) have been removed for now due to reliability concerns. I may revisit these features in a future version.
+- Advanced file management features (naming schemes, organization, system/region detection, etc.) have been removed from development due to reliability concerns. These features were never released to users and may be revisited in the future.
 - Support for all chdman-compatible formats: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .m3u, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk (with .flac and .wav supported only as part of a .cue set, not as standalone input)
 - File/folder scanning is now done in a background thread with proper Qt signals/slots, preventing crashes when selecting files or folders.
 - All UI updates from scanning are now safely performed in the main thread.
@@ -119,7 +119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **v1.0.0**: Initial release with basic functionality
 - **v2.0.0**: Major feature update with statistics, smart detection, stop button, etc.
 - **v2.1.0**: Setup simplification with chdman.exe inclusion
-- **Unreleased**: Advanced file management system (current development)
+- **v2.2.0**: UI and stability improvements, background scanning, drag-and-drop, and more
 
 ## Contributing
 
