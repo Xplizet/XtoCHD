@@ -29,7 +29,7 @@ if errorlevel 1 (
 
 echo.
 echo Build completed successfully!
-echo Executable created in: dist\XtoCHD.exe
+echo Executable created with version number from changelog
 echo.
 
 REM Check if chdman.exe exists and copy it

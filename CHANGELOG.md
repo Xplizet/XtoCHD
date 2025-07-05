@@ -5,16 +5,96 @@ All notable changes to XtoCHD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [v2.3.0] - 2024-12-19
+
+### Added
+- **File Preview & Validation**
+  - Real-time file validation with format-specific checks
+  - Progressive validation updates - each file updates as soon as validation completes
+  - Visual validation status indicators (green checkmarks, red X's, loading spinners)
+  - Detailed file information panel showing format, size, and validation details
+  - Background validation that doesn't block UI responsiveness
+  - Smart tooltips with validation results and error details
+  - Automatic exclusion of invalid files from conversion
+  - Warning system for unvalidated files during conversion
+  - Support for validating ISO, CUE, BIN, IMG, and ZIP formats
+  - Asynchronous validation worker thread for smooth UI experience
+  - File picker restricted to supported formats only
+  - Drag-and-drop validation - only accepts supported files and folders
+  - Multi-file drag-and-drop support - scan all dropped files and folders
+  - Incremental file addition - new files are added to existing list instead of replacing
+  - Immediate file display - new files appear in list instantly, not waiting for validation
+  - Smart validation caching - only validates new files, preserves existing validation results
+  - Duplicate detection - prevents adding files with same name and size
+  - Clear error messages when attempting to add unsupported files
+  - Proper file management - CHD files are moved to output directory after conversion
+  - Automatic cleanup - incomplete files are removed on conversion failure
+  - Existing CHD file detection - skips conversion if CHD already exists in output directory
+  - Smart duplicate detection - handles multiple formats of same content with format priority
+
+- **Simplified chdman Integration**
+  - Removed manual chdman.exe selection - now automatically detected
+  - Status indicator shows chdman.exe location (application folder or current directory)
+  - Clear error message if chdman.exe is missing with instructions to place in same folder as XtoCHD
+  - Streamlined UI with fewer configuration options
+
+- **Automatic chdman Detection**
+  - Real-time file system monitoring for chdman.exe presence
+  - Automatic UI updates when chdman.exe is added or removed
+  - No restart required - detection works while application is running
+  - Smart start button that enables/disables based on chdman availability
+
+### Changed
+- File list now shows validation status immediately with progressive updates
+- Conversion process now warns about invalid/unvalidated files
+- Enhanced user feedback with color-coded status indicators
+- Improved file selection workflow with validation awareness
+- Select All/None buttons moved to right side of "Files to Convert:" label
+- Start button automatically enables/disables based on chdman availability, file presence, and output path
+
+### Fixed
+- Fixed TypeError when start button was accessed before UI initialization
+- Fixed issue where adding new files would clear the existing file list
+- Fixed crashes when file_info_cache wasn't initialized before use
+- Fixed issue where converted CHD files weren't moved to the specified output folder
+- Fixed missing check for existing CHD files to prevent unnecessary re-conversion
+- Fixed issue where unsupported files caused the program to do nothing instead of showing clear error messages
+- Fixed drag-and-drop to handle multiple files/folders instead of just one at a time
+
+### Technical
+- Added ValidationWorker thread for background file validation
+- Implemented parallel validation using ThreadPoolExecutor for faster processing
+- Dynamic worker count based on file count and system CPU cores
+- Implemented format-specific validation functions
+- Enhanced UI responsiveness during file scanning and validation
+- Added comprehensive error handling for validation failures
+- Added QFileSystemWatcher for automatic chdman.exe detection
+- Improved start button state management with centralized update logic
+
 ## [v2.2.0] - 2024-07-05
 
-- Support for all chdman-compatible formats: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .m3u, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk (with .flac and .wav supported only as part of a .cue set, not as standalone input)
-- File/folder scanning is now done in a background thread with proper Qt signals/slots, preventing crashes when selecting files or folders.
-- All UI updates from scanning are now safely performed in the main thread.
-- Drag-and-drop support for adding files or folders as input.
-- Log area now auto-scrolls to show the latest message.
-- 'Open Output Folder' button opens the output folder in your file manager.
-- File picker defaults to supported formats but allows 'All Files' as an option.
-- File sizes are now displayed in the 'Files to Convert' list.
+### Added
+- **Enhanced Format Support**
+  - Support for all chdman-compatible formats: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .m3u, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk
+  - Note: .flac and .wav files supported only as part of a .cue set, not as standalone input
+
+- **Improved User Experience**
+  - Drag-and-drop support for adding files or folders as input
+  - Log area now auto-scrolls to show the latest message
+  - 'Open Output Folder' button opens the output folder in your file manager
+  - File picker defaults to supported formats but allows 'All Files' as an option
+  - File sizes are now displayed in the 'Files to Convert' list
+
+### Changed
+- File/folder scanning is now done in a background thread with proper Qt signals/slots, preventing crashes when selecting files or folders
+- All UI updates from scanning are now safely performed in the main thread
+
+### Technical
+- Enhanced thread safety with proper Qt signal/slot implementation
+- Improved UI responsiveness during file scanning operations
+- Better error handling for file selection operations
 
 ## [v2.1.0] - 2025-07-04
 

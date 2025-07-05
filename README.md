@@ -11,9 +11,9 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 ## Download
 
 ### For End Users (No Installation Required)
-1. Download the latest release from the [Releases](https://github.com/yourusername/XtoCHD/releases) page
-2. Extract the ZIP file
-3. Double-click `XtoCHD.exe` to run (chdman.exe is included)
+1. Download the latest release ZIP file from the [Releases](https://github.com/yourusername/XtoCHD/releases) page
+2. Extract the ZIP file to any folder
+3. Double-click `XtoCHD.exe` to run (chdman.exe is included in the release)
 
 ### For Developers
 1. Clone this repository

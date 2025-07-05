@@ -7,9 +7,36 @@ import os
 import sys
 import subprocess
 import shutil
+import re
+
+def extract_version_from_changelog():
+    """Extract the current version from CHANGELOG.md"""
+    try:
+        with open("CHANGELOG.md", "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        # Look for the latest version entry (first one after [Unreleased])
+        version_pattern = r'## \[v(\d+\.\d+\.\d+)\]'
+        matches = re.findall(version_pattern, content)
+        
+        if matches:
+            # Get the first version (latest one)
+            version = matches[0]
+            print(f"Extracted version from changelog: v{version}")
+            return version
+        else:
+            print("Warning: No version found in CHANGELOG.md, using default")
+            return "2.3.0"  # Default fallback
+    except Exception as e:
+        print(f"Warning: Could not read CHANGELOG.md: {e}")
+        return "2.3.0"  # Default fallback
 
 def main():
     print("Building XtoCHD executable...")
+    
+    # Extract version from changelog
+    version = extract_version_from_changelog()
+    exe_name = f"XtoCHD_v{version}"
     
     # Check if PyInstaller is installed
     try:
@@ -24,12 +51,12 @@ def main():
     if os.path.exists("dist"):
         shutil.rmtree("dist")
     
-    # Build the executable
+    # Build the executable with versioned name
     cmd = [
         "pyinstaller",
         "--onefile",
         "--windowed",
-        "--name=XtoCHD",
+        f"--name={exe_name}",
         "--icon=icon.ico" if os.path.exists("icon.ico") else "",
         "main.py"
     ]
@@ -40,8 +67,8 @@ def main():
     print(f"Running: {' '.join(cmd)}")
     subprocess.check_call(cmd)
     
-    print("\nBuild complete!")
-    print("Executable created in: dist/XtoCHD.exe")
+    print(f"\nBuild complete!")
+    print(f"Executable created in: dist/{exe_name}.exe")
     
     # Copy chdman.exe if it exists
     if os.path.exists("chdman.exe"):
@@ -51,7 +78,8 @@ def main():
         print("\nWarning: chdman.exe not found in current directory")
         print("Please download chdman.exe from the MAME project and place it in the dist/ folder")
     
-    print("\nDistribution ready in dist/ folder!")
+    print(f"\nDistribution ready in dist/ folder!")
+    print(f"Executable: {exe_name}.exe")
 
 if __name__ == "__main__":
     main() 
