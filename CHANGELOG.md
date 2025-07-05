@@ -7,14 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [v2.3.1] - 2024-12-19
+## [v2.3.1] - 2025-07-05
 
 ### Fixed
 - Fixed duplicate detection to properly handle multi-file formats (CUE+BIN, TOC+BIN, CCD+IMG+SUB, M3U+referenced files)
 - Fixed issue where CUE and BIN files with same base name were incorrectly treated as duplicates
 - Enhanced smart duplicate detection to distinguish between true duplicates and required multi-file relationships
 
-## [v2.3.0] - 2024-12-19
+## [v2.3.0] - 2025-07-05
 
 ### Added
 - **File Preview & Validation**
@@ -206,6 +206,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **v2.0.0**: Major feature update with statistics, smart detection, stop button, etc.
 - **v2.1.0**: Setup simplification with chdman.exe inclusion
 - **v2.2.0**: UI and stability improvements, background scanning, drag-and-drop, and more
+- **v2.3.0**: File preview & validation system with enhanced UX and automatic chdman detection
+- **v2.3.1**: Bug fix for multi-file format handling (CUE+BIN, TOC+BIN, etc.)
 
 ## Contributing
 
