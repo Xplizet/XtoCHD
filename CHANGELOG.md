@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.3.1] - 2024-12-19
+
+### Fixed
+- Fixed duplicate detection to properly handle multi-file formats (CUE+BIN, TOC+BIN, CCD+IMG+SUB, M3U+referenced files)
+- Fixed issue where CUE and BIN files with same base name were incorrectly treated as duplicates
+- Enhanced smart duplicate detection to distinguish between true duplicates and required multi-file relationships
+
 ## [v2.3.0] - 2024-12-19
 
 ### Added
@@ -27,12 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Incremental file addition - new files are added to existing list instead of replacing
   - Immediate file display - new files appear in list instantly, not waiting for validation
   - Smart validation caching - only validates new files, preserves existing validation results
-  - Duplicate detection - prevents adding files with same name and size
+  - Smart duplicate detection - prevents adding files with same base name (regardless of size)
   - Clear error messages when attempting to add unsupported files
   - Proper file management - CHD files are moved to output directory after conversion
   - Automatic cleanup - incomplete files are removed on conversion failure
   - Existing CHD file detection - skips conversion if CHD already exists in output directory
-  - Smart duplicate detection - handles multiple formats of same content with format priority
+  - Smart duplicate detection - handles multiple formats of same content with format priority (ISO > CUE > BIN > IMG > ZIP > others)
 
 - **Simplified chdman Integration**
   - Removed manual chdman.exe selection - now automatically detected
