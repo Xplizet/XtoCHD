@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.4.0] - 2025-07-05
+
+### Added
+- **Dark Mode Theme**: Complete dark theme with modern styling
+- **Theme Switching**: Menu bar option to switch between light and dark themes
+- **Theme-Aware UI**: All UI elements adapt to the selected theme
+- **Persistent Theme**: Theme selection is maintained during the session
+
 ## [v2.3.1] - 2025-07-05
 
 ### Fixed
@@ -208,6 +216,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **v2.2.0**: UI and stability improvements, background scanning, drag-and-drop, and more
 - **v2.3.0**: File preview & validation system with enhanced UX and automatic chdman detection
 - **v2.3.1**: Bug fix for multi-file format handling (CUE+BIN, TOC+BIN, etc.)
+- **v2.4.0**: Dark mode theme with theme switching and improved user experience
 
 ## Contributing
 

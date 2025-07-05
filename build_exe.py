@@ -70,16 +70,40 @@ def main():
     print(f"\nBuild complete!")
     print(f"Executable created in: dist/{exe_name}.exe")
     
-    # Copy chdman.exe if it exists
-    if os.path.exists("chdman.exe"):
-        shutil.copy2("chdman.exe", "dist/chdman.exe")
-        print("chdman.exe copied to dist/ folder")
-    else:
-        print("\nWarning: chdman.exe not found in current directory")
-        print("Please download chdman.exe from the MAME project and place it in the dist/ folder")
+    # Create versioned folder
+    version_folder = f"dist/XtoCHD_v{version}"
+    if os.path.exists(version_folder):
+        shutil.rmtree(version_folder)
+    os.makedirs(version_folder)
     
-    print(f"\nDistribution ready in dist/ folder!")
-    print(f"Executable: {exe_name}.exe")
+    # Move executable to versioned folder
+    exe_source = f"dist/{exe_name}.exe"
+    exe_dest = f"{version_folder}/XtoCHD.exe"
+    shutil.move(exe_source, exe_dest)
+    
+    # Copy chdman.exe if it exists (only to versioned folder)
+    if os.path.exists("chdman.exe"):
+        shutil.copy2("chdman.exe", f"{version_folder}/chdman.exe")
+        print(f"chdman.exe copied to {version_folder}/")
+    else:
+        print(f"\nWarning: chdman.exe not found in current directory")
+        print(f"Please download chdman.exe from the MAME project and place it in {version_folder}/")
+    
+    # Clean up any chdman.exe that might have been copied to dist/ root
+    dist_chdman = "dist/chdman.exe"
+    if os.path.exists(dist_chdman):
+        os.remove(dist_chdman)
+        print("Cleaned up chdman.exe from dist/ root folder")
+    
+    # Also clean up any other potential duplicates in dist/
+    for item in os.listdir("dist"):
+        if item.startswith("chdman") and item != "chdman.exe":
+            os.remove(os.path.join("dist", item))
+            print(f"Cleaned up duplicate: {item}")
+    
+    print(f"\nDistribution ready in {version_folder}/ folder!")
+    print(f"Executable: {version_folder}/XtoCHD.exe")
+    print(f"Folder structure: {version_folder}/")
 
 if __name__ == "__main__":
     main() 

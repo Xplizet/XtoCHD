@@ -11,16 +11,215 @@ import struct
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QFileDialog, QTextEdit, QProgressBar, QListWidget, QListWidgetItem, QCheckBox,
-    QScrollArea, QFrame, QDialog, QButtonGroup, QRadioButton, QStatusBar, QGroupBox
+    QScrollArea, QFrame, QDialog, QButtonGroup, QRadioButton, QStatusBar, QGroupBox,
+    QAction, QMenuBar, QMenu, QMainWindow
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QFileSystemWatcher
-from PyQt5.QtGui import QColor, QPalette
+from PyQt5.QtGui import QColor, QPalette, QFont
 
 COMPATIBLE_EXTS = {
     '.cue', '.bin', '.iso', '.img', '.nrg', '.gdi', '.toc', '.ccd', '.m3u', '.vcd',
     '.chd', '.zip', '.cdr', '.hdi', '.vhd', '.vmdk', '.dsk'
 }
 DISK_IMAGE_EXTS = {'.cue', '.bin', '.iso', '.img'}
+
+# Theme management
+class ThemeManager:
+    @staticmethod
+    def get_light_theme():
+        return """
+        QWidget {
+            background-color: #f5f5f5;
+            color: #333333;
+        }
+        QPushButton {
+            background-color: #e0e0e0;
+            border: 1px solid #cccccc;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-weight: bold;
+        }
+        QPushButton:hover {
+            background-color: #d0d0d0;
+        }
+        QPushButton:pressed {
+            background-color: #c0c0c0;
+        }
+        QPushButton:disabled {
+            background-color: #f0f0f0;
+            color: #999999;
+        }
+        QLineEdit {
+            background-color: white;
+            border: 1px solid #cccccc;
+            border-radius: 3px;
+            padding: 4px;
+        }
+        QLineEdit:focus {
+            border: 2px solid #4a90e2;
+        }
+        QTextEdit {
+            background-color: white;
+            border: 1px solid #cccccc;
+            border-radius: 3px;
+        }
+        QListWidget {
+            background-color: white;
+            border: 1px solid #cccccc;
+            border-radius: 3px;
+            alternate-background-color: #f9f9f9;
+        }
+        QListWidget::item {
+            padding: 4px;
+        }
+        QListWidget::item:selected {
+            background-color: #e3f2fd;
+            color: #1976d2;
+        }
+        QProgressBar {
+            border: 1px solid #cccccc;
+            border-radius: 3px;
+            text-align: center;
+        }
+        QProgressBar::chunk {
+            background-color: #4caf50;
+            border-radius: 2px;
+        }
+        QStatusBar {
+            background-color: #e0e0e0;
+            border-top: 1px solid #cccccc;
+        }
+        QMenuBar {
+            background-color: #f5f5f5;
+            border-bottom: 1px solid #cccccc;
+        }
+        QMenuBar::item {
+            background-color: transparent;
+            padding: 4px 8px;
+        }
+        QMenuBar::item:selected {
+            background-color: #e0e0e0;
+        }
+        QMenu {
+            background-color: white;
+            border: 1px solid #cccccc;
+        }
+        QMenu::item {
+            padding: 6px 20px;
+        }
+        QMenu::item:selected {
+            background-color: #e3f2fd;
+        }
+        """
+
+    @staticmethod
+    def get_dark_theme():
+        return """
+        QWidget {
+            background-color: #2d2d2d;
+            color: #e0e0e0;
+        }
+        QPushButton {
+            background-color: #404040;
+            border: 1px solid #555555;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-weight: bold;
+            color: #e0e0e0;
+        }
+        QPushButton:hover {
+            background-color: #505050;
+        }
+        QPushButton:pressed {
+            background-color: #353535;
+        }
+        QPushButton:disabled {
+            background-color: #353535;
+            color: #666666;
+        }
+        QLineEdit {
+            background-color: #404040;
+            border: 1px solid #555555;
+            border-radius: 3px;
+            padding: 4px;
+            color: #e0e0e0;
+        }
+        QLineEdit:focus {
+            border: 2px solid #64b5f6;
+        }
+        QTextEdit {
+            background-color: #404040;
+            border: 1px solid #555555;
+            border-radius: 3px;
+            color: #e0e0e0;
+        }
+        QListWidget {
+            background-color: #404040;
+            border: 1px solid #555555;
+            border-radius: 3px;
+            alternate-background-color: #353535;
+        }
+        QListWidget::item {
+            padding: 4px;
+        }
+        QListWidget::item:selected {
+            background-color: #1976d2;
+            color: white;
+        }
+        QProgressBar {
+            border: 1px solid #555555;
+            border-radius: 3px;
+            text-align: center;
+            background-color: #404040;
+        }
+        QProgressBar::chunk {
+            background-color: #4caf50;
+            border-radius: 2px;
+        }
+        QStatusBar {
+            background-color: #404040;
+            border-top: 1px solid #555555;
+        }
+        QMenuBar {
+            background-color: #2d2d2d;
+            border-bottom: 1px solid #555555;
+        }
+        QMenuBar::item {
+            background-color: transparent;
+            padding: 4px 8px;
+        }
+        QMenuBar::item:selected {
+            background-color: #404040;
+        }
+        QMenu {
+            background-color: #404040;
+            border: 1px solid #555555;
+        }
+        QMenu::item {
+            padding: 6px 20px;
+        }
+        QMenu::item:selected {
+            background-color: #1976d2;
+        }
+        QCheckBox {
+            color: #e0e0e0;
+        }
+        QCheckBox::indicator {
+            width: 16px;
+            height: 16px;
+        }
+        QCheckBox::indicator:unchecked {
+            border: 2px solid #555555;
+            background-color: #404040;
+        }
+        QCheckBox::indicator:checked {
+            border: 2px solid #64b5f6;
+            background-color: #1976d2;
+        }
+        QLabel {
+            color: #e0e0e0;
+        }
+        """
 
 # System detection patterns
 SYSTEM_PATTERNS = {
@@ -700,12 +899,12 @@ class InputSelectionDialog(QDialog):
         button_layout.addWidget(cancel_button)
         layout.addLayout(button_layout)
         
-        self.setLayout(layout)
+        central_widget.setLayout(layout)
     
     def get_selection_type(self):
         return "file" if self.file_radio.isChecked() else "folder"
 
-class CHDConverterGUI(QWidget):
+class CHDConverterGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('XtoCHD - Batch CHD Converter')
@@ -714,7 +913,14 @@ class CHDConverterGUI(QWidget):
         self.found_files = []
         self.conversion_worker = None
         self.scan_worker = None
+        
+        # Theme management
+        self.current_theme = 'dark'  # Default to dark theme
+        
         self.init_ui()
+        self.setup_menu_bar()
+        self.apply_theme(self.current_theme)
+        
         # Setup file system watcher for chdman.exe
         self.app_dir = os.path.dirname(os.path.abspath(__file__))
         self.chdman_path = None
@@ -726,6 +932,79 @@ class CHDConverterGUI(QWidget):
         self.update_start_button_state()
         # Drag-and-drop support
         self.setAcceptDrops(True)
+
+    def setup_menu_bar(self):
+        """Setup the menu bar with theme switching options"""
+        menubar = self.menuBar()
+        
+        # View menu
+        view_menu = menubar.addMenu('View')
+        
+        # Theme submenu
+        theme_menu = view_menu.addMenu('Theme')
+        
+        # Light theme action
+        light_action = QAction('Light Theme', self)
+        light_action.setCheckable(True)
+        light_action.setChecked(self.current_theme == 'light')
+        light_action.triggered.connect(lambda: self.switch_theme('light'))
+        theme_menu.addAction(light_action)
+        
+        # Dark theme action
+        dark_action = QAction('Dark Theme', self)
+        dark_action.setCheckable(True)
+        dark_action.setChecked(self.current_theme == 'dark')
+        dark_action.triggered.connect(lambda: self.switch_theme('dark'))
+        theme_menu.addAction(dark_action)
+        
+        # Store actions for later use
+        self.light_theme_action = light_action
+        self.dark_theme_action = dark_action
+
+    def switch_theme(self, theme):
+        """Switch between light and dark themes"""
+        if theme != self.current_theme:
+            self.current_theme = theme
+            self.apply_theme(theme)
+            
+            # Update menu checkmarks
+            if hasattr(self, 'light_theme_action'):
+                self.light_theme_action.setChecked(theme == 'light')
+            if hasattr(self, 'dark_theme_action'):
+                self.dark_theme_action.setChecked(theme == 'dark')
+
+    def apply_theme(self, theme):
+        """Apply the specified theme to the application"""
+        if theme == 'dark':
+            self.setStyleSheet(ThemeManager.get_dark_theme())
+        else:
+            self.setStyleSheet(ThemeManager.get_light_theme())
+        
+        # Update specific widget styles that need custom handling
+        self.update_widget_styles_for_theme(theme)
+
+    def update_widget_styles_for_theme(self, theme):
+        """Update specific widget styles that need custom handling"""
+        if theme == 'dark':
+            # Update file info text background for dark theme
+            if hasattr(self, 'file_info_text'):
+                self.file_info_text.setStyleSheet("""
+                    QTextEdit { 
+                        background-color: #404040; 
+                        border: 1px solid #555555; 
+                        color: #e0e0e0;
+                    }
+                """)
+        else:
+            # Update file info text background for light theme
+            if hasattr(self, 'file_info_text'):
+                self.file_info_text.setStyleSheet("""
+                    QTextEdit { 
+                        background-color: #f0f0f0; 
+                        border: 1px solid #ccc; 
+                        color: #333333;
+                    }
+                """)
 
     def on_chdman_dir_changed(self, path):
         # Directory changed, re-check for chdman.exe
@@ -842,6 +1121,10 @@ class CHDConverterGUI(QWidget):
             self.scan_for_files_auto(supported_paths)
 
     def init_ui(self):
+        # Create central widget for QMainWindow
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
         layout = QVBoxLayout()
         layout.setSpacing(16)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -945,7 +1228,7 @@ class CHDConverterGUI(QWidget):
         self.status_bar = QStatusBar()
         self.status_bar.showMessage('Ready to convert')
         layout.addWidget(self.status_bar)
-        self.setLayout(layout)
+        central_widget.setLayout(layout)
 
     def open_output_folder(self):
         import os
@@ -1399,11 +1682,17 @@ class CHDConverterGUI(QWidget):
             info_text += f"Format: {file_info['extension']}\n"
             info_text += f"Status: {file_info['validation_msg']}"
             
-            # Color code the text based on validation status
-            if file_info['is_valid']:
-                self.file_info_text.setStyleSheet("QTextEdit { background-color: #e8f5e8; border: 1px solid #4caf50; }")
+            # Color code the text based on validation status and current theme
+            if self.current_theme == 'dark':
+                if file_info['is_valid']:
+                    self.file_info_text.setStyleSheet("QTextEdit { background-color: #1b5e20; border: 1px solid #4caf50; color: #e0e0e0; }")
+                else:
+                    self.file_info_text.setStyleSheet("QTextEdit { background-color: #b71c1c; border: 1px solid #f44336; color: #e0e0e0; }")
             else:
-                self.file_info_text.setStyleSheet("QTextEdit { background-color: #ffe8e8; border: 1px solid #f44336; }")
+                if file_info['is_valid']:
+                    self.file_info_text.setStyleSheet("QTextEdit { background-color: #e8f5e8; border: 1px solid #4caf50; color: #333333; }")
+                else:
+                    self.file_info_text.setStyleSheet("QTextEdit { background-color: #ffe8e8; border: 1px solid #f44336; color: #333333; }")
             
             self.file_info_text.setText(info_text)
 
@@ -1543,7 +1832,8 @@ class CHDConverterGUI(QWidget):
         self.log_area.append(text)
         self.log_area.moveCursor(self.log_area.textCursor().End)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    import sys
     app = QApplication(sys.argv)
     window = CHDConverterGUI()
     window.show()

@@ -32,16 +32,10 @@ echo Build completed successfully!
 echo Executable created with version number from changelog
 echo.
 
-REM Check if chdman.exe exists and copy it
-if exist "chdman.exe" (
-    copy "chdman.exe" "dist\chdman.exe" >nul
-    echo chdman.exe copied to dist\ folder
-    echo.
-    echo Distribution ready in dist\ folder!
-) else (
-    echo Warning: chdman.exe not found in current directory
-    echo Please download chdman.exe from the MAME project and place it in the dist\ folder
-)
+REM Build script handles chdman.exe copying to versioned folder
+echo.
+echo Distribution ready in versioned folder!
+echo Check dist\XtoCHD_v* folder for the release
 
 echo.
 pause 
