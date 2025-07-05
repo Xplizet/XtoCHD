@@ -7,14 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [v2.3.1] - 2024-12-19
+## [v2.3.1] - 2025-07-05
 
 ### Fixed
 - Fixed duplicate detection to properly handle multi-file formats (CUE+BIN, TOC+BIN, CCD+IMG+SUB, M3U+referenced files)
 - Fixed issue where CUE and BIN files with same base name were incorrectly treated as duplicates
 - Enhanced smart duplicate detection to distinguish between true duplicates and required multi-file relationships
 
-## [v2.3.0] - 2024-12-19
+## [v2.3.0] - 2025-07-05
 
 ### Added
 - **File Preview & Validation**
