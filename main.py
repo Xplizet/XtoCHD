@@ -1025,7 +1025,7 @@ class CHDConverterGUI(QWidget):
                 except (OSError, IOError):
                     file_size = 0
                 
-                # Check for duplicates by base name (without extension) and size
+                # Check for duplicates by base name (without extension)
                 # This handles cases like game.iso, game.zip, game.cue containing same content
                 file_base_name = os.path.splitext(file_name)[0]
                 file_ext = os.path.splitext(file_name)[1].lower()
@@ -1033,15 +1033,39 @@ class CHDConverterGUI(QWidget):
                 should_replace_existing = False
                 existing_file_to_remove = None
                 
+                # Define multi-file format relationships
+                multi_file_formats = {
+                    '.cue': ['.bin'],  # CUE files need BIN files
+                    '.toc': ['.bin'],  # TOC files need BIN files
+                    '.ccd': ['.img', '.sub'],  # CCD files need IMG and SUB files
+                    '.m3u': ['.cue', '.bin', '.iso', '.img']  # M3U files can reference various formats
+                }
+                
                 for existing_file in self.found_files:
                     try:
                         existing_name = os.path.basename(existing_file)
                         existing_base_name = os.path.splitext(existing_name)[0]
                         existing_ext = os.path.splitext(existing_name)[1].lower()
                         
-                        # Check if base names match and sizes are the same
-                        if (existing_base_name == file_base_name and 
-                            os.path.getsize(existing_file) == file_size):
+                        # Check if base names match (regardless of size)
+                        if existing_base_name == file_base_name:
+                            
+                            # Check if this is a multi-file format relationship
+                            is_multi_file_relationship = False
+                            
+                            # Check if existing file needs the new file
+                            if existing_ext in multi_file_formats:
+                                if file_ext in multi_file_formats[existing_ext]:
+                                    is_multi_file_relationship = True
+                            
+                            # Check if new file needs the existing file
+                            if file_ext in multi_file_formats:
+                                if existing_ext in multi_file_formats[file_ext]:
+                                    is_multi_file_relationship = True
+                            
+                            # If it's a multi-file relationship, don't treat as duplicate
+                            if is_multi_file_relationship:
+                                continue
                             
                             # Format priority: prefer ISO > CUE > BIN > IMG > ZIP > others
                             format_priority = {
