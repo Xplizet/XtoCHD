@@ -23,18 +23,19 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 
 ## How to Use
 
-1. **Select Input**: Choose a file or folder containing disk images
+1. **Select Input**: Choose a file or folder containing disk images, or drag and drop files/folders directly onto the application
 2. **Select Output**: Pick where to save the converted .CHD files (auto-suggests `[input]/CHD/`)
 3. **Set chdman Path**: The app will auto-detect `chdman.exe` if it's in the same folder, or you can manually browse to it
-4. **Scan Files**: Click "Scan for Files" to find compatible images (duplicates are automatically handled)
-5. **Select Files**: Check/uncheck which files to convert
+4. **Scan Files**: Files are automatically scanned when you select input (scanning runs in background for better responsiveness)
+5. **Select Files**: Check/uncheck which files to convert (file sizes are displayed for reference)
 6. **Start Conversion**: Click "Start Conversion" and monitor progress
 7. **Stop if Needed**: Use the "Stop Conversion" button to cancel at any time
 8. **Review Results**: Check the comprehensive conversion summary at the end
+9. **View Output**: Use the "Open Output Folder" button to quickly access your converted files
 
 ## Supported Formats
 
-- **Input**: .cue, .bin, .iso, .img, .zip
+- **Input**: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .m3u, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk
 - **Output**: .CHD
 
 ## Requirements
@@ -62,12 +63,17 @@ XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img
 - **Intuitive Controls**: Easy-to-use interface with clear feedback
 - **Error Handling**: Clear error messages and recovery options
 - **Responsive Design**: UI remains responsive during long conversions
+- **Drag & Drop**: Support for dragging files and folders directly onto the application
+- **Background Scanning**: File scanning runs in background threads for better responsiveness
 
 ### 🔧 Advanced Features
 - **Stop Conversion**: Cancel running conversions with proper cleanup
 - **Auto-suggest Output**: Automatically suggests output folder location
 - **Smart Duplicate Detection**: Handles multiple formats of the same content
 - **Enhanced ZIP Support**: Smart extraction with existing file detection
+- **File Size Display**: Shows file sizes in the conversion list
+- **Open Output Folder**: Quick access to view converted files
+- **Auto-scrolling Log**: Log area automatically scrolls to show latest messages
 
 ## Building from Source
 
