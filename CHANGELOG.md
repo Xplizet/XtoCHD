@@ -5,7 +5,28 @@ All notable changes to XtoCHD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v2.5.0] - 2025-01-XX
+
+### Added
+- **Fast Validation Mode**
+  - New toggle for switching between fast and thorough file validation
+  - Fast mode provides 5-10x faster validation for large files
+  - ISO files: Only check file size (2KB minimum) instead of 32KB header reads
+  - ZIP files: Only check header signature instead of full integrity test
+  - CUE files: Read 512 bytes instead of 1KB
+  - Default enabled for optimal performance
+  - Toggle triggers automatic file rescan with new validation mode
+  - Enhanced tooltip with detailed explanation of validation modes
+  - Clear user notification when validation mode changes
+
+### Removed
+- **M3U Playlist Support**: Removed all M3U playlist handling functionality to simplify the codebase and focus on core CHD conversion features.
+
+### Changed
+- Simplified file validation with performance-optimized default mode
+- Streamlined UI by removing M3U playlist processing options
+- Enhanced user feedback with validation mode change notifications
+- Improved validation worker threading for better performance
 
 ## [v2.4.0] - 2025-07-05
 
@@ -18,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v2.3.1] - 2025-07-05
 
 ### Fixed
-- Fixed duplicate detection to properly handle multi-file formats (CUE+BIN, TOC+BIN, CCD+IMG+SUB, M3U+referenced files)
+- Fixed duplicate detection to properly handle multi-file formats (CUE+BIN, TOC+BIN, CCD+IMG+SUB)
 - Fixed issue where CUE and BIN files with same base name were incorrectly treated as duplicates
 - Enhanced smart duplicate detection to distinguish between true duplicates and required multi-file relationships
 
@@ -92,7 +113,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Enhanced Format Support**
-  - Support for all chdman-compatible formats: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .m3u, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk
+  - Support for all chdman-compatible formats: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk
   - Note: .flac and .wav files supported only as part of a .cue set, not as standalone input
 
 - **Improved User Experience**

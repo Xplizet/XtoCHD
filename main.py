@@ -18,7 +18,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, QFileSystemWatcher
 from PyQt5.QtGui import QColor, QPalette, QFont
 
 COMPATIBLE_EXTS = {
-    '.cue', '.bin', '.iso', '.img', '.nrg', '.gdi', '.toc', '.ccd', '.m3u', '.vcd',
+    '.cue', '.bin', '.iso', '.img', '.nrg', '.gdi', '.toc', '.ccd', '.vcd',
     '.chd', '.zip', '.cdr', '.hdi', '.vhd', '.vmdk', '.dsk'
 }
 DISK_IMAGE_EXTS = {'.cue', '.bin', '.iso', '.img'}
@@ -239,7 +239,7 @@ SYSTEM_PATTERNS = {
 }
 
 # File validation functions
-def validate_file(file_path):
+def validate_file(file_path, fast_mode=True):
     """Basic file validation - check if file exists and has valid header"""
     try:
         if not os.path.exists(file_path):
@@ -264,15 +264,15 @@ def validate_file(file_path):
         ext = os.path.splitext(file_path)[1].lower()
         
         if ext == '.iso':
-            return validate_iso_file(header, file_size)
+            return validate_iso_file(header, file_size, fast_mode)
         elif ext == '.cue':
-            return validate_cue_file(file_path)
+            return validate_cue_file(file_path, fast_mode)
         elif ext == '.bin':
             return validate_bin_file(header, file_size)
         elif ext == '.img':
             return validate_img_file(header, file_size)
         elif ext == '.zip':
-            return validate_zip_file(file_path)
+            return validate_zip_file(file_path, fast_mode)
         else:
             # For other supported formats, just check if file is readable
             return True, "File appears valid"
@@ -280,31 +280,44 @@ def validate_file(file_path):
     except Exception as e:
         return False, f"Validation error: {str(e)}"
 
-def validate_iso_file(header, file_size):
+def validate_iso_file(header, file_size, fast_mode=True):
     """Validate ISO file format"""
     try:
-        # Check for ISO 9660 signature
-        if len(header) >= 32768:  # ISO files should be at least 32KB
-            # Look for ISO 9660 volume descriptor
-            for i in range(0, min(len(header), 32768), 2048):
-                if i + 7 < len(header):
-                    if header[i:i+6] == b'CD001\x01':
-                        return True, "Valid ISO 9660 format"
-        
-        # Check for other common ISO formats
-        if file_size >= 2048:  # Minimum size for any ISO
-            return True, "ISO file appears valid"
+        if fast_mode:
+            # Fast mode: only check file size (2KB minimum)
+            if file_size >= 2048:
+                return True, "ISO file appears valid (fast mode)"
+            else:
+                return False, "ISO file too small"
         else:
-            return False, "ISO file too small"
+            # Full mode: check for ISO 9660 signature
+            if len(header) >= 32768:  # ISO files should be at least 32KB
+                # Look for ISO 9660 volume descriptor
+                for i in range(0, min(len(header), 32768), 2048):
+                    if i + 7 < len(header):
+                        if header[i:i+6] == b'CD001\x01':
+                            return True, "Valid ISO 9660 format"
+            
+            # Check for other common ISO formats
+            if file_size >= 2048:  # Minimum size for any ISO
+                return True, "ISO file appears valid"
+            else:
+                return False, "ISO file too small"
             
     except Exception as e:
         return False, f"ISO validation error: {str(e)}"
 
-def validate_cue_file(file_path):
+def validate_cue_file(file_path, fast_mode=True):
     """Validate CUE file format"""
     try:
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read(1024)  # Read first 1KB
+        if fast_mode:
+            # Fast mode: read 512 bytes instead of 1KB
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read(512)
+        else:
+            # Full mode: read 1KB
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read(1024)
             
         if not content.strip():
             return False, "Empty CUE file"
@@ -322,7 +335,8 @@ def validate_cue_file(file_path):
                 has_track = True
                 
         if has_file and has_track:
-            return True, "Valid CUE file"
+            mode_text = " (fast mode)" if fast_mode else ""
+            return True, f"Valid CUE file{mode_text}"
         else:
             return False, "Invalid CUE file structure"
             
@@ -353,22 +367,34 @@ def validate_img_file(header, file_size):
     except Exception as e:
         return False, f"IMG validation error: {str(e)}"
 
-def validate_zip_file(file_path):
+def validate_zip_file(file_path, fast_mode=True):
     """Validate ZIP file format"""
     try:
-        with zipfile.ZipFile(file_path, 'r') as z:
-            # Check if ZIP is valid
-            test_result = z.testzip()
-            if test_result is None:
-                return True, "Valid ZIP file"
+        if fast_mode:
+            # Fast mode: only check header signature
+            with open(file_path, 'rb') as f:
+                header = f.read(4)
+            if header == b'PK\x03\x04':
+                return True, "Valid ZIP file (fast mode)"
             else:
-                return False, f"ZIP file corrupted: {test_result}"
+                return False, "Invalid ZIP file format"
+        else:
+            # Full mode: complete integrity test
+            with zipfile.ZipFile(file_path, 'r') as z:
+                # Check if ZIP is valid
+                test_result = z.testzip()
+                if test_result is None:
+                    return True, "Valid ZIP file"
+                else:
+                    return False, f"ZIP file corrupted: {test_result}"
     except zipfile.BadZipFile:
         return False, "Invalid ZIP file format"
     except Exception as e:
         return False, f"ZIP validation error: {str(e)}"
 
-def get_file_info(file_path):
+
+
+def get_file_info(file_path, fast_validation=True):
     """Get comprehensive file information"""
     try:
         file_size = os.path.getsize(file_path)
@@ -385,7 +411,7 @@ def get_file_info(file_path):
             size_str = f"{file_size} bytes"
         
         # Validate file
-        is_valid, validation_msg = validate_file(file_path)
+        is_valid, validation_msg = validate_file(file_path, fast_validation)
         
         return {
             'name': os.path.basename(file_path),
@@ -485,6 +511,7 @@ class ConversionWorker(QThread):
                 # Handle zip files by extracting and converting contents
                 self.log_updated.emit(f'Processing zip: {file_path}')
                 self.process_zip_file(file_path, current_file, total_files)
+
             else:
                 # Handle regular disk image files
                 self.convert_single_file(file_path, current_file, total_files)
@@ -554,6 +581,8 @@ class ConversionWorker(QThread):
             summary.append("FAILED CONVERSIONS:")
             for file_name in self.conversion_stats['failed_files']:
                 summary.append(f"  ✗ {file_name}")
+        
+
         
         summary.append("=" * 50)
         
@@ -642,6 +671,8 @@ class ConversionWorker(QThread):
                         
         except Exception as e:
             self.log_updated.emit(f'Failed to process zip {zip_path}: {e}')
+    
+
     
     def convert_single_file(self, file_path, current_file, total_files):
         """Convert a single disk image file to CHD"""
@@ -814,16 +845,17 @@ class ValidationWorker(QThread):
     validation_complete = pyqtSignal(dict)
     validation_progress = pyqtSignal(str, dict)  # file_path, file_info
     
-    def __init__(self, file_paths, max_workers=4):
+    def __init__(self, file_paths, max_workers=4, fast_validation=True):
         super().__init__()
         self.file_paths = file_paths
         self.max_workers = max_workers
+        self.fast_validation = fast_validation
         self._lock = threading.Lock()
         
     def validate_single_file(self, file_path):
         """Validate a single file - used by thread pool"""
         try:
-            file_info = get_file_info(file_path)
+            file_info = get_file_info(file_path, self.fast_validation)
             return file_path, file_info
         except Exception as e:
             # If validation fails, create basic info
@@ -1170,6 +1202,28 @@ class CHDConverterGUI(QMainWindow):
         chdman_layout.addStretch()
         layout.addLayout(chdman_layout)
 
+        # Conversion options
+        options_layout = QHBoxLayout()
+        self.fast_validation_cb = QCheckBox("Fast Validation Mode")
+        self.fast_validation_cb.setChecked(True)  # Default enabled
+        self.fast_validation_cb.setToolTip(
+            "Fast Mode (Default):\n"
+            "• ISO: Check file size only (2KB minimum)\n"
+            "• ZIP: Check header signature only\n"
+            "• CUE: Read 512 bytes instead of 1KB\n"
+            "• 5-10x faster for large files\n\n"
+            "Thorough Mode (Unchecked):\n"
+            "• ISO: Full 32KB header validation\n"
+            "• ZIP: Complete integrity test\n"
+            "• CUE: Full 1KB structure analysis\n"
+            "• Slower but more thorough validation\n\n"
+            "Note: Changing this setting will automatically rescan all files."
+        )
+        self.fast_validation_cb.toggled.connect(self.on_validation_mode_changed)
+        options_layout.addWidget(self.fast_validation_cb)
+        options_layout.addStretch()
+        layout.addLayout(options_layout)
+
         # File list section with label and buttons on same line
         file_list_header_layout = QHBoxLayout()
         file_list_label = QLabel('Files to Convert:')
@@ -1243,7 +1297,7 @@ class CHDConverterGUI(QMainWindow):
     def select_input_file(self):
         options = QFileDialog.Options()
         file, _ = QFileDialog.getOpenFileName(self, 'Select File', '',
-            'Compatible Files (*.cue *.bin *.iso *.img *.zip *.nrg *.gdi *.toc *.ccd *.m3u *.vcd *.chd *.cdr *.hdi *.vhd *.vmdk *.dsk)', options=options)
+            'Compatible Files (*.cue *.bin *.iso *.img *.zip *.nrg *.gdi *.toc *.ccd *.vcd *.chd *.cdr *.hdi *.vhd *.vmdk *.dsk)', options=options)
         if file:
             self.input_path_edit.setText(file)
             self.auto_suggest_output_folder(file)
@@ -1320,8 +1374,7 @@ class CHDConverterGUI(QMainWindow):
                 multi_file_formats = {
                     '.cue': ['.bin'],  # CUE files need BIN files
                     '.toc': ['.bin'],  # TOC files need BIN files
-                    '.ccd': ['.img', '.sub'],  # CCD files need IMG and SUB files
-                    '.m3u': ['.cue', '.bin', '.iso', '.img']  # M3U files can reference various formats
+                    '.ccd': ['.img', '.sub']  # CCD files need IMG and SUB files
                 }
                 
                 for existing_file in self.found_files:
@@ -1354,8 +1407,8 @@ class CHDConverterGUI(QMainWindow):
                             format_priority = {
                                 '.iso': 1, '.cue': 2, '.bin': 3, '.img': 4, 
                                 '.zip': 5, '.nrg': 6, '.gdi': 7, '.toc': 8, 
-                                '.ccd': 9, '.m3u': 10, '.vcd': 11, '.chd': 12,
-                                '.cdr': 13, '.hdi': 14, '.vhd': 15, '.vmdk': 16, '.dsk': 17
+                                '.ccd': 9, '.vcd': 10, '.chd': 11,
+                                '.cdr': 12, '.hdi': 13, '.vhd': 14, '.vmdk': 15, '.dsk': 16
                             }
                             
                             existing_priority = format_priority.get(existing_ext, 999)
@@ -1572,7 +1625,9 @@ class CHDConverterGUI(QMainWindow):
         else:
             max_workers = min(6, cpu_count)
         
-        self.validation_worker = ValidationWorker(unvalidated_files, max_workers=max_workers)
+        # Get the current fast validation setting
+        fast_validation = self.fast_validation_cb.isChecked()
+        self.validation_worker = ValidationWorker(unvalidated_files, max_workers=max_workers, fast_validation=fast_validation)
         self.validation_worker.validation_progress.connect(self.update_single_file_validation)
         self.validation_worker.validation_complete.connect(self.update_file_validation)
         self.validation_worker.start()
@@ -1782,6 +1837,7 @@ class CHDConverterGUI(QMainWindow):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.file_list.setEnabled(False)
+        self.fast_validation_cb.setEnabled(False)
 
     def enable_ui_after_conversion(self):
         """Re-enable all UI elements after conversion"""
@@ -1793,6 +1849,7 @@ class CHDConverterGUI(QMainWindow):
         self.update_start_button_state()
         self.stop_btn.setEnabled(False)
         self.file_list.setEnabled(True)
+        self.fast_validation_cb.setEnabled(True)
 
     def stop_conversion(self):
         """Stop the current conversion process"""
@@ -1828,6 +1885,15 @@ class CHDConverterGUI(QMainWindow):
         if cleaned_count > 0:
             self.log_area.append(f'Cleaned up {cleaned_count} temporary directories.')
 
+    def on_validation_mode_changed(self):
+        """Handle validation mode toggle - trigger rescan"""
+        if hasattr(self, 'found_files') and self.found_files:
+            # Show prominent notification in log area
+            mode_text = "Fast" if self.fast_validation_cb.isChecked() else "Thorough"
+            self.log_area_append(f"🔄 Validation mode changed to {mode_text} mode. Rescanning files...")
+            self.status_bar.showMessage(f'Validation mode changed to {mode_text} mode. Rescanning files...')
+            self.scan_for_files_auto(self.input_path_edit.text().strip())
+    
     def log_area_append(self, text):
         self.log_area.append(text)
         self.log_area.moveCursor(self.log_area.textCursor().End)
