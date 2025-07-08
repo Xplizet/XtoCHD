@@ -115,7 +115,7 @@ The application is completely safe to use. This is a known issue with antivirus 
 - **File Validation**: Real-time file validation with visual status indicators
 - **Fast Validation Mode**: Toggle between fast (5-10x faster) and thorough validation
 
-### 🔧 Advanced Features
+### 🔧 Convenience Features
 - **Stop Conversion**: Cancel running conversions with proper cleanup
 - **Auto-suggest Output**: Automatically suggests output folder location
 - **Open Output Folder**: Quick access to view converted files
