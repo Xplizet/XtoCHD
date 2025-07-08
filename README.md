@@ -95,13 +95,14 @@ The application is completely safe to use. This is a known issue with antivirus 
 - **Format Prioritization**: Automatically selects the best format when duplicates exist
 - **Existing File Detection**: Skips files that already have CHD versions
 - **Batch Processing**: Convert multiple files or entire folders at once
-- **ZIP Support**: Extract and convert files from ZIP archives
+- **Smart Duplicate Detection**: Handles multiple formats of the same content
+- **ZIP Support**: Extract and convert files from ZIP archives with smart extraction
 
 ### 📈 Comprehensive Reporting
 - **Success Rate**: Shows percentage of successful conversions
-- **Size Analysis**: Original vs compressed file sizes
-- **Space Savings**: Total space saved and compression ratios
+- **Size Analysis**: Original vs compressed file sizes with space savings
 - **Detailed Lists**: Complete breakdown of all processed files
+- **File Size Display**: Shows file sizes in the conversion list
 
 ### 🎮 User-Friendly Interface
 - **Real-time Progress**: Live status updates and progress tracking
@@ -117,13 +118,9 @@ The application is completely safe to use. This is a known issue with antivirus 
 ### 🔧 Advanced Features
 - **Stop Conversion**: Cancel running conversions with proper cleanup
 - **Auto-suggest Output**: Automatically suggests output folder location
-- **Smart Duplicate Detection**: Handles multiple formats of the same content
-- **Enhanced ZIP Support**: Smart extraction with existing file detection
-- **File Size Display**: Shows file sizes in the conversion list
 - **Open Output Folder**: Quick access to view converted files
 - **Auto-scrolling Log**: Log area automatically scrolls to show latest messages
 - **File Information Panel**: Detailed file information with validation status
-- **Validation Mode Toggle**: Switch between fast and thorough file validation
 - **Automatic chdman Detection**: Real-time detection of chdman.exe presence
 
 ## Building from Source
