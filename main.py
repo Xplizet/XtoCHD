@@ -30,7 +30,12 @@ class TempFileManager:
     """Manages temporary files and directories with crash-proof cleanup"""
     
     def __init__(self):
-        self.app_dir = os.path.dirname(os.path.abspath(__file__))
+        if getattr(sys, 'frozen', False):
+            # Running as compiled .exe
+            self.app_dir = os.path.dirname(sys.executable)
+        else:
+            # Running as script
+            self.app_dir = os.path.dirname(os.path.abspath(__file__))
         self.temp_base_dir = os.path.join(self.app_dir, 'temp')
         self.temp_dirs = []
         self.cleanup_on_exit = True
