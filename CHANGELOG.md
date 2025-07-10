@@ -5,6 +5,45 @@ All notable changes to XtoCHD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v2.6.0] - 2025-07-09
+
+### Added
+- **Comprehensive Temp File Management System**
+  - Dedicated temp directory within app folder (`[XtoCHD_directory]/temp/`)
+  - Crash-proof cleanup using `atexit` handler for application exit
+  - Startup cleanup of orphaned temp files (removes directories older than 1 hour)
+  - Per-file cleanup after each individual CHD conversion
+  - Age-based cleanup with configurable thresholds
+  - Process ID tracking in temp directory names for uniqueness
+  - Automatic fallback to system temp directory if dedicated temp fails
+
+- **Enhanced Temp File Monitoring**
+  - Real-time temp directory size monitoring with warnings for large directories (>100MB)
+  - Temp directory size and location display in logs
+  - Manual cleanup options via new Tools menu
+  - "Temp Directory Info" shows location and current size
+  - "Clean Temp Directory" for manual cleanup operations
+  - Enhanced logging with emojis for better visibility (🧹, 📁, 📂, ⚠️)
+
+- **Tools Menu**
+  - New Tools menu in menu bar with temp directory management options
+  - "Temp Directory Info" displays temp directory location and size
+  - "Clean Temp Directory" performs manual cleanup of orphaned files
+
+### Changed
+- **Temp File Location**: All temp files now stored in dedicated `temp/` directory within app folder
+- **Cleanup Strategy**: Immediate per-file cleanup instead of batch cleanup at end
+- **Error Handling**: Graceful degradation with fallback to system temp directory
+- **User Feedback**: Enhanced logging with clear status messages and warnings
+- **Startup Process**: Added temp directory cleanup and status reporting on startup
+
+### Technical
+- **TempFileManager Class**: Centralized temp file management with comprehensive error handling
+- **atexit Integration**: Automatic cleanup registration for crash-proof operation
+- **Directory Naming**: Timestamp and process ID based naming for uniqueness
+- **Size Monitoring**: Efficient temp directory size calculation and formatting
+- **Orphaned File Detection**: Age-based cleanup of old temp directories
+
 ## [v2.5.0] - 2025-01-XX
 
 ### Added

@@ -8,6 +8,8 @@ import threading
 import time
 import re
 import struct
+import atexit
+from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QFileDialog, QTextEdit, QProgressBar, QListWidget, QListWidgetItem, QCheckBox,
@@ -22,6 +24,131 @@ COMPATIBLE_EXTS = {
     '.chd', '.zip', '.cdr', '.hdi', '.vhd', '.vmdk', '.dsk'
 }
 DISK_IMAGE_EXTS = {'.cue', '.bin', '.iso', '.img'}
+
+# Global temp directory management
+class TempFileManager:
+    """Manages temporary files and directories with crash-proof cleanup"""
+    
+    def __init__(self):
+        self.app_dir = os.path.dirname(os.path.abspath(__file__))
+        self.temp_base_dir = os.path.join(self.app_dir, 'temp')
+        self.temp_dirs = []
+        self.cleanup_on_exit = True
+        
+        # Create temp directory if it doesn't exist
+        self._ensure_temp_dir()
+        
+        # Register cleanup on application exit
+        atexit.register(self.cleanup_all_temp_dirs)
+    
+    def _ensure_temp_dir(self):
+        """Ensure the temp directory exists"""
+        try:
+            if not os.path.exists(self.temp_base_dir):
+                os.makedirs(self.temp_base_dir)
+        except Exception as e:
+            print(f"Warning: Could not create temp directory {self.temp_base_dir}: {e}")
+    
+    def create_temp_dir(self, prefix='chdconv_'):
+        """Create a temporary directory within the app's temp folder"""
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            temp_dir = os.path.join(self.temp_base_dir, f"{prefix}{timestamp}_{os.getpid()}")
+            os.makedirs(temp_dir, exist_ok=True)
+            self.temp_dirs.append(temp_dir)
+            return temp_dir
+        except Exception as e:
+            print(f"Warning: Could not create temp directory: {e}")
+            # Fallback to system temp directory
+            fallback_dir = tempfile.mkdtemp(prefix=prefix)
+            self.temp_dirs.append(fallback_dir)
+            return fallback_dir
+    
+    def cleanup_temp_dir(self, temp_dir):
+        """Clean up a specific temp directory"""
+        if temp_dir in self.temp_dirs:
+            try:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                    self.temp_dirs.remove(temp_dir)
+                    return True
+            except Exception as e:
+                print(f"Warning: Could not clean up temp dir {temp_dir}: {e}")
+        return False
+    
+    def cleanup_all_temp_dirs(self):
+        """Clean up all tracked temp directories"""
+        if not self.cleanup_on_exit:
+            return
+            
+        cleaned_count = 0
+        for temp_dir in self.temp_dirs[:]:  # Copy list to avoid modification during iteration
+            try:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                    cleaned_count += 1
+            except Exception as e:
+                print(f"Warning: Could not clean up temp dir {temp_dir}: {e}")
+        
+        self.temp_dirs.clear()
+        return cleaned_count
+    
+    def cleanup_orphaned_temp_dirs(self):
+        """Clean up any orphaned temp directories from previous runs"""
+        if not os.path.exists(self.temp_base_dir):
+            return 0
+            
+        cleaned_count = 0
+        try:
+            for item in os.listdir(self.temp_base_dir):
+                item_path = os.path.join(self.temp_base_dir, item)
+                if os.path.isdir(item_path):
+                    # Check if this is an old temp directory (older than 1 hour)
+                    try:
+                        stat = os.stat(item_path)
+                        age_hours = (time.time() - stat.st_mtime) / 3600
+                        if age_hours > 1:  # Clean up directories older than 1 hour
+                            shutil.rmtree(item_path)
+                            cleaned_count += 1
+                    except Exception as e:
+                        print(f"Warning: Could not check/clean temp dir {item_path}: {e}")
+        except Exception as e:
+            print(f"Warning: Could not scan temp directory: {e}")
+        
+        return cleaned_count
+    
+    def get_temp_dir_size(self):
+        """Get the total size of the temp directory in bytes"""
+        if not os.path.exists(self.temp_base_dir):
+            return 0
+            
+        total_size = 0
+        try:
+            for root, dirs, files in os.walk(self.temp_base_dir):
+                for file in files:
+                    try:
+                        file_path = os.path.join(root, file)
+                        total_size += os.path.getsize(file_path)
+                    except (OSError, IOError):
+                        pass
+        except Exception:
+            pass
+        
+        return total_size
+    
+    def format_size(self, size_bytes):
+        """Format bytes into human readable format"""
+        if size_bytes == 0:
+            return "0 B"
+        size_names = ["B", "KB", "MB", "GB"]
+        i = 0
+        while size_bytes >= 1024 and i < len(size_names) - 1:
+            size_bytes /= 1024.0
+            i += 1
+        return f"{size_bytes:.1f} {size_names[i]}"
+
+# Global temp file manager instance
+temp_manager = TempFileManager()
 
 # Theme management
 class ThemeManager:
@@ -596,7 +723,7 @@ class ConversionWorker(QThread):
             return
             
         self.progress_text.emit(f"Extracting {os.path.basename(zip_path)}...")
-        temp_dir = tempfile.mkdtemp(prefix='chdconv_zip_')
+        temp_dir = temp_manager.create_temp_dir(prefix='chdconv_zip_')
         self.temp_dirs.append(temp_dir)
         
         try:
@@ -754,6 +881,9 @@ class ConversionWorker(QThread):
                     self.log_updated.emit(f'Success: {output_chd_path}')
                     self.progress_text.emit(f"✓ Completed: {os.path.basename(output_chd_path)}")
                     
+                    # Clean up temp files for this specific conversion
+                    self.cleanup_temp_files_for_file(file_path)
+                    
                 except Exception as move_error:
                     # If move fails, try to clean up and report error
                     if os.path.exists(chd_file_path):
@@ -795,14 +925,34 @@ class ConversionWorker(QThread):
             self.conversion_stats['failed_conversions'] += 1
             self.conversion_stats['failed_files'].append(os.path.basename(file_path))
     
+    def cleanup_temp_files_for_file(self, file_path):
+        """Clean up temp files related to a specific file conversion"""
+        try:
+            # Look for any temp files that might have been created for this specific file
+            base_name = os.path.splitext(os.path.basename(file_path))[0]
+            
+            # Check if there are any temp files with this base name
+            for temp_dir in self.temp_dirs:
+                if os.path.exists(temp_dir):
+                    for root, dirs, files in os.walk(temp_dir):
+                        for file in files:
+                            if base_name in file:
+                                try:
+                                    file_path_to_remove = os.path.join(root, file)
+                                    os.remove(file_path_to_remove)
+                                except Exception:
+                                    pass
+        except Exception:
+            pass  # Silently fail if cleanup fails
+    
     def cleanup_temp_dirs(self):
         """Clean up temporary directories created during conversion"""
+        cleaned_count = 0
         for d in self.temp_dirs:
-            try:
-                shutil.rmtree(d)
-            except Exception:
-                pass
+            if temp_manager.cleanup_temp_dir(d):
+                cleaned_count += 1
         self.temp_dirs = []
+        return cleaned_count
 
 class ScanWorker(QThread):
     scan_progress = pyqtSignal(str)
@@ -962,6 +1112,10 @@ class CHDConverterGUI(QMainWindow):
         self.fs_watcher.fileChanged.connect(self.on_chdman_file_changed)
         self.auto_detect_chdman()
         self.update_start_button_state()
+        
+        # Perform startup cleanup of orphaned temp files
+        self.perform_startup_cleanup()
+        
         # Drag-and-drop support
         self.setAcceptDrops(True)
 
@@ -992,6 +1146,18 @@ class CHDConverterGUI(QMainWindow):
         # Store actions for later use
         self.light_theme_action = light_action
         self.dark_theme_action = dark_action
+        
+        # Tools menu
+        tools_menu = menubar.addMenu('Tools')
+        
+        # Temp directory management
+        temp_info_action = QAction('Temp Directory Info', self)
+        temp_info_action.triggered.connect(self.show_temp_directory_info)
+        tools_menu.addAction(temp_info_action)
+        
+        cleanup_action = QAction('Clean Temp Directory', self)
+        cleanup_action.triggered.connect(self.cleanup_temp_directory)
+        tools_menu.addAction(cleanup_action)
 
     def switch_theme(self, theme):
         """Switch between light and dark themes"""
@@ -1813,6 +1979,9 @@ class CHDConverterGUI(QMainWindow):
             self.log_area.append('chdman.exe not found. Please place chdman.exe in the same folder as XtoCHD.')
             return
 
+        # Check temp directory before starting conversion
+        self.check_temp_directory_before_conversion()
+
         # Disable all UI elements during conversion
         self.disable_ui_during_conversion()
         self.progress_bar.setMaximum(100)
@@ -1875,12 +2044,8 @@ class CHDConverterGUI(QMainWindow):
         """Clean up temporary directories created during scanning and conversion"""
         cleaned_count = 0
         for d in self.temp_dirs:
-            try:
-                if os.path.exists(d):
-                    shutil.rmtree(d)
-                    cleaned_count += 1
-            except Exception as e:
-                self.log_area.append(f'Warning: Could not clean up temp dir {d}: {e}')
+            if temp_manager.cleanup_temp_dir(d):
+                cleaned_count += 1
         self.temp_dirs = []
         if cleaned_count > 0:
             self.log_area.append(f'Cleaned up {cleaned_count} temporary directories.')
@@ -1893,6 +2058,78 @@ class CHDConverterGUI(QMainWindow):
             self.log_area_append(f"🔄 Validation mode changed to {mode_text} mode. Rescanning files...")
             self.status_bar.showMessage(f'Validation mode changed to {mode_text} mode. Rescanning files...')
             self.scan_for_files_auto(self.input_path_edit.text().strip())
+    
+    def perform_startup_cleanup(self):
+        """Perform cleanup of orphaned temp files on startup"""
+        try:
+            # Clean up orphaned temp directories
+            cleaned_count = temp_manager.cleanup_orphaned_temp_dirs()
+            
+            # Get current temp directory size
+            temp_size = temp_manager.get_temp_dir_size()
+            
+            if cleaned_count > 0:
+                self.log_area.append(f'🧹 Startup cleanup: Removed {cleaned_count} orphaned temporary directories.')
+            
+            if temp_size > 0:
+                size_str = temp_manager.format_size(temp_size)
+                self.log_area.append(f'📁 Temp directory size: {size_str}')
+            
+            # Log temp directory location
+            self.log_area.append(f'📂 Temp directory: {temp_manager.temp_base_dir}')
+            
+        except Exception as e:
+            self.log_area.append(f'⚠️ Warning: Could not perform startup cleanup: {e}')
+    
+    def get_temp_directory_info(self):
+        """Get information about the temp directory"""
+        try:
+            temp_size = temp_manager.get_temp_dir_size()
+            size_str = temp_manager.format_size(temp_size)
+            return f"Temp directory: {temp_manager.temp_base_dir}\nSize: {size_str}"
+        except Exception as e:
+            return f"Temp directory: {temp_manager.temp_base_dir}\nSize: Unknown (error: {e})"
+    
+    def check_temp_directory_before_conversion(self):
+        """Check temp directory status before starting conversion"""
+        try:
+            temp_size = temp_manager.get_temp_dir_size()
+            size_mb = temp_size / (1024 * 1024)
+            
+            if size_mb > 100:  # Warn if temp directory is larger than 100MB
+                size_str = temp_manager.format_size(temp_size)
+                self.log_area.append(f'⚠️ Warning: Temp directory is {size_str}. Consider cleaning up.')
+            
+            # Log current temp directory status
+            size_str = temp_manager.format_size(temp_size)
+            self.log_area.append(f'📁 Temp directory status: {size_str}')
+            
+        except Exception as e:
+            self.log_area.append(f'⚠️ Warning: Could not check temp directory: {e}')
+    
+    def show_temp_directory_info(self):
+        """Show information about the temp directory"""
+        from PyQt5.QtWidgets import QMessageBox
+        
+        info = self.get_temp_directory_info()
+        QMessageBox.information(self, 'Temp Directory Info', info)
+    
+    def cleanup_temp_directory(self):
+        """Manually clean up the temp directory"""
+        try:
+            cleaned_count = temp_manager.cleanup_orphaned_temp_dirs()
+            if cleaned_count > 0:
+                self.log_area.append(f'🧹 Manual cleanup: Removed {cleaned_count} temporary directories.')
+            else:
+                self.log_area.append('🧹 Manual cleanup: No temporary directories to clean up.')
+            
+            # Update temp directory info
+            temp_size = temp_manager.get_temp_dir_size()
+            size_str = temp_manager.format_size(temp_size)
+            self.log_area.append(f'📁 Current temp directory size: {size_str}')
+            
+        except Exception as e:
+            self.log_area.append(f'⚠️ Error during manual cleanup: {e}')
     
     def log_area_append(self, text):
         self.log_area.append(text)

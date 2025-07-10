@@ -78,6 +78,26 @@ The application is completely safe to use. This is a known issue with antivirus 
 10. **Review Results**: Check the comprehensive conversion summary at the end
 11. **View Output**: Use the "Open Output Folder" button to quickly access your converted files
 
+## Temp File Management
+
+XtoCHD includes a comprehensive temp file management system to ensure clean operation:
+
+### Automatic Cleanup
+- **Dedicated Temp Directory**: All temp files stored in `[XtoCHD_directory]/temp/`
+- **Crash-Proof Cleanup**: Automatic cleanup even if the application crashes
+- **Startup Cleanup**: Removes orphaned temp files on application startup
+- **Per-File Cleanup**: Temp files cleaned up after each individual conversion
+
+### Manual Management
+- **Tools Menu**: Access "Temp Directory Info" and "Clean Temp Directory" options
+- **Size Monitoring**: Automatic warnings for large temp directories (>100MB)
+- **Status Logging**: Clear logging of temp directory operations and cleanup
+
+### Crash Handling
+- **Automatic Cleanup**: Temp files are automatically cleaned up on next startup
+- **Age-Based Cleanup**: Removes temp directories older than 1 hour
+- **Process Tracking**: Unique temp directory names prevent conflicts
+
 ## Supported Formats
 
 - **Input**: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk
@@ -122,6 +142,8 @@ The application is completely safe to use. This is a known issue with antivirus 
 - **Auto-scrolling Log**: Log area automatically scrolls to show latest messages
 - **File Information Panel**: Detailed file information with validation status
 - **Automatic chdman Detection**: Real-time detection of chdman.exe presence
+- **Temp File Management**: Dedicated temp directory with automatic cleanup and crash recovery
+- **Tools Menu**: Manual temp directory cleanup and monitoring options
 
 ## Building from Source
 
