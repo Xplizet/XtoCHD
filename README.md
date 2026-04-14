@@ -1,6 +1,6 @@
 # XtoCHD
 
-A powerful GUI application to convert disk images to CHD format using chdman with advanced features and comprehensive statistics.
+A GUI application to convert disk images to CHD format using chdman with advanced features and comprehensive statistics.
 
 ![XtoCHD Screenshot](screenshot.png)
 
