@@ -5,6 +5,65 @@ All notable changes to XtoCHD will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v2.7.0] - 2026-04-20
+
+### Fixed
+- **chdman hang with latest MAME builds**: recent chdman (0.28x) streams continuous progress to stderr and can block on stdin under `subprocess.run(capture_output=True)`. The conversion path now uses `subprocess.Popen` with `stdin=DEVNULL` and drains stdout/stderr on background threads, so chdman never deadlocks on a full pipe or an interactive prompt that has no one to answer it.
+- **Stop Conversion actually stops now**: the worker keeps a handle to the running subprocess and kills the entire process tree on cancel (via `taskkill /F /T` on Windows, `terminate()` elsewhere). Previously the button flipped a flag but the chdman process kept running.
+- **Sibling-index regression**: an archive that ships both `.cue` and `.gdi` for the same disc was getting converted twice and the second file only skipped after the fact. The candidate filter now picks one index per directory (order of preference: `.cue`, `.gdi`, `.toc`, `.ccd`) and drops the rest before chdman is invoked.
+- **"0.0 MB" original size on index inputs**: the summary used to stat the `.cue`/`.gdi` manifest (a few hundred bytes of text), making the compression ratio meaningless. Now it sums every non-CHD file in the disc's directory, so the numbers match the actual disc size.
+- **Temp directory collision**: `create_temp_dir()` named directories by timestamp plus PID, which collided when two subdirectories were created in the same second. Switched to `tempfile.mkdtemp` with a dated prefix so back-to-back calls always produce distinct paths. A regression test covers this.
+- **"Clean Temp Directory" now cleans**: the Tools menu action was wired to the same age-gated orphan sweep the startup path uses, which only removes subdirectories older than one hour. Clicking it right after a crashed conversion reported "nothing to clean up" while half a gigabyte sat in `temp/`. A new `purge_temp_base_dir()` removes every subdirectory regardless of age, guarded so it refuses to run while a conversion is in flight.
+- **Validation-mode toggle now re-validates**: flipping Fast <-> Thorough logged "Rescanning files..." but silently did nothing, because the `file_info_cache` from the previous mode was never cleared. The cache is now cleared on mode change, every row visually resets to a pending state, and a closing log line reports the new outcome when the ValidationWorker finishes.
+
+### Added
+- **`.rar` and `.7z` archive support**: the tool now extracts `.rar` and `.7z` alongside `.zip`, using the `bsdtar`/`libarchive` build that ships with Windows 10 1803+ (`%SystemRoot%\System32\tar.exe`). No extra binary is bundled.
+- **Redesigned main window**:
+  - Top `QToolBar` for primary actions (`Add File`, `Add Folder`, `Fast Validation` toggle, chdman status badge, log-pane toggle).
+  - Inline trailing actions on the output path `QLineEdit` (Browse / Open Folder), replacing the wide external buttons that used to squash the path field.
+  - Custom `FileListDelegate` paints each row as: native checkbox, colour-coded format badge (indigo for archives, amber for disc-index, teal for disc data), filename, right-aligned size. Badge colour encodes format family, not validation state, so colour-blind users can still distinguish formats.
+  - "Absence-is-good" status: healthy rows show no right-side indicator; `validating...` appears in grey while the worker runs, `INVALID` appears as a red pill only when a file fails validation.
+  - Live list summary header: `2/2 selected · 416 MB · All valid`, updated as selections and validation results change.
+  - Collapsible File Information panel, hidden until a file is selected; expanded / collapsed state persisted across runs.
+  - Single morphing action button: full-width green `Start Conversion` when idle; swaps to red `Stop Conversion` during a run via `QStackedWidget`.
+  - `QSplitter` divider between controls and log pane with drag-to-resize and `QSettings` persistence. Log can be hidden entirely via the toolbar toggle.
+- **Remembers last-used folders**: input and output paths are persisted via `QSettings` and restored on startup. If the last input folder still exists, it is rescanned automatically.
+- **Reorganised conversion summary**: the per-file `SUCCESSFULLY CONVERTED` / `SKIPPED` / `FAILED` blocks now appear at the top of the summary, before the aggregate counts and size statistics, because that is what users scan for first.
+- **Pytest suite**: 50 tests covering `filter_conversion_candidates`, every per-format validator (including the new `.rar` / `.7z` / `.gdi` / `.toc` / `.ccd` sniffs), `TempFileManager` lifecycle (orphan sweep and force-purge), and the `ConversionStats` derived properties. Runs in well under a second. See `tests/` and `pytest.ini`.
+
+### Changed
+- **chdman updated to 0.287** (MAME 0.287 release).
+- **Refactored `main.py` into an `xtochd/` package**. The old 2469-line `main.py` is now a focused entry point (around 1400 lines after the UI redesign) that only contains the main window and its delegate. Everything else lives in small, single-purpose modules:
+  - `xtochd/constants.py`: extension sets and format-priority tables
+  - `xtochd/stats.py`: `ConversionStats` dataclass (replaces the old untyped dict)
+  - `xtochd/temp_manager.py`: crash-proof temp-directory management
+  - `xtochd/theme.py`: light/dark stylesheets
+  - `xtochd/validators.py`: per-format validation plus `filter_conversion_candidates`
+  - `xtochd/workers.py`: `ConversionWorker`, `ScanWorker`, `ValidationWorker`
+- **Consolidated chdman invocation**: the run-chdman plus drain-pipes plus kill-on-cancel block is now a single `_run_chdman()` helper instead of inline logic repeated in two places.
+- **Validation dispatched via a table** instead of the previous if/elif/elif ladder.
+
+### Removed
+- `InputSelectionDialog`: unused dead class that also contained a latent `NameError` (reference to an undefined `central_widget`).
+- `SYSTEM_PATTERNS`: defined at module scope but never read anywhere.
+- Six redundant function-scope `import os` / `import subprocess` statements shadowing the module-level imports.
+- `.chd` from the accepted input set. The tool's sole purpose is to produce `.chd` files, and `chdman createcd` on a `.chd` input is a no-op at best. It no longer appears in the file dialog filter, drag-drop acceptance, or the folder scanner.
+- **Formats that never actually worked**: `.nrg`, `.vcd`, `.cdr`, `.hdi`, `.vhd`, `.vmdk`, `.dsk`. These were historically listed as "supported" but the conversion pipeline only ever invokes `chdman createcd`, which either rejects them (hard-disk images need `createhd`) or cannot parse them (Nero and Apple raw formats). Accepting them in the GUI only produced silent conversion failures. If support for hard-disk images is desired later, it needs a per-format dispatch that picks the correct `chdman create*` subcommand. Accepted input is now narrowed to the set that chdman 0.287 can genuinely handle via `createcd`: `.cue`, `.bin`, `.iso`, `.img`, `.gdi`, `.toc`, `.ccd`, plus the `.zip`/`.rar`/`.7z` archives that contain them.
+
+### Validation correctness
+- Every extension in `COMPATIBLE_EXTS` now has a real validator. Previously `.rar`, `.7z`, `.gdi`, `.toc`, `.ccd` and several others fell through to a default "File appears valid" branch, meaning the Fast/Thorough toggle had no effect on those files and broken archives were passed straight through to chdman. New validators:
+  - `.rar`: legacy (`Rar!\x1a\x07\x00`) and RAR5 (`Rar!\x1a\x07\x01\x00`) magic bytes
+  - `.7z`: 7-Zip magic (`7z\xbc\xaf\x27\x1c`)
+  - `.gdi`: first-line track-count sniff (the well-known GDI header shape)
+  - `.toc`: CDRDAO keyword sniff (`CD_DA`, `CD_ROM_XA`, etc.)
+  - `.ccd`: `[CloneCD]` / `[Disc]` section sniff
+- A regression test (`test_every_compatible_ext_has_a_validator`) now fails loudly if anyone adds a format to `COMPATIBLE_EXTS` without registering a validator.
+
+### Technical
+- Public worker API is unchanged: same signals (`progress_updated`, `progress_text`, `log_updated`, `conversion_finished`, scan/validation equivalents) and constructor shape, so any code that embedded `ConversionWorker` still works.
+- Type hints added to the pure helpers (`filter_conversion_candidates`, validators, `TempFileManager`, `ConversionStats`).
+- `pytest.ini` added at the project root so `python -m pytest` works with no configuration. A `requirements-dev.txt` tracks the pytest dev dependency separately from the runtime requirements.
+
 ## [v2.6.1] - 2025-07-10
 
 ### Fixed
@@ -284,6 +343,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **v2.3.0**: File preview & validation system with enhanced UX and automatic chdman detection
 - **v2.3.1**: Bug fix for multi-file format handling (CUE+BIN, TOC+BIN, etc.)
 - **v2.4.0**: Dark mode theme with theme switching and improved user experience
+- **v2.5.0**: Fast validation mode toggle; M3U playlist support removed
+- **v2.6.0**: Comprehensive temp file management system and Tools menu
+- **v2.6.1**: Temp directory location fix for compiled executables
+- **v2.7.0**: chdman hang fix for latest MAME builds; .rar/.7z support; refactor into xtochd/ package; test suite
 
 ## Contributing
 

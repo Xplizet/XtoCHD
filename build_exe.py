@@ -88,6 +88,16 @@ def main():
     else:
         print(f"\nWarning: chdman.exe not found in current directory")
         print(f"Please download chdman.exe from the MAME project and place it in {version_folder}/")
+
+    # Copy the MAME license next to chdman.exe. MAME is GPL-2.0, so the
+    # redistribution obligation is to ship the license text alongside the
+    # bundled binary and point at upstream source (done in README).
+    if os.path.exists("MAME-LICENSE.txt"):
+        shutil.copy2("MAME-LICENSE.txt", f"{version_folder}/MAME-LICENSE.txt")
+        print(f"MAME-LICENSE.txt copied to {version_folder}/")
+    else:
+        print("\nWarning: MAME-LICENSE.txt not found in current directory")
+        print("Fetch it from https://github.com/mamedev/mame/blob/master/COPYING")
     
     # Clean up any chdman.exe that might have been copied to dist/ root
     dist_chdman = "dist/chdman.exe"

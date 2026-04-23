@@ -6,7 +6,7 @@ A GUI application to convert disk images to CHD format using chdman with advance
 
 ## What is XtoCHD?
 
-XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img, .zip) to .CHD format. This is useful for retro gaming and emulation. The application provides a user-friendly interface with advanced features for batch processing and detailed conversion reporting.
+XtoCHD helps you convert various disk image formats (like .cue, .bin, .iso, .img, .zip, .rar, .7z) to .CHD format. This is useful for retro gaming and emulation. The application provides a user-friendly interface with advanced features for batch processing and detailed conversion reporting.
 
 ## Download
 
@@ -100,12 +100,16 @@ XtoCHD includes a comprehensive temp file management system to ensure clean oper
 
 ## Supported Formats
 
-- **Input**: .cue, .bin, .iso, .img, .nrg, .gdi, .toc, .ccd, .vcd, .chd, .zip, .cdr, .hdi, .vhd, .vmdk, .dsk
+- **Input**: .cue, .bin, .iso, .img, .gdi, .toc, .ccd, .zip, .rar, .7z
 - **Output**: .CHD
+
+Archive handling:
+- `.zip` is read with Python's standard library.
+- `.rar` and `.7z` are extracted via the bundled `bsdtar` (libarchive) that ships with Windows 10 1803 and later at `C:\Windows\System32\tar.exe`. No extra third-party binary is installed.
 
 ## Requirements
 
-- Windows 10/11
+- Windows 10 1803 or later (required for built-in `.rar` / `.7z` extraction) or Windows 11
 - No Python installation needed for the executable
 - chdman.exe is included in the release (from MAME project)
 
@@ -116,7 +120,7 @@ XtoCHD includes a comprehensive temp file management system to ensure clean oper
 - **Existing File Detection**: Skips files that already have CHD versions
 - **Batch Processing**: Convert multiple files or entire folders at once
 - **Smart Duplicate Detection**: Handles multiple formats of the same content
-- **ZIP Support**: Extract and convert files from ZIP archives with smart extraction
+- **Archive Support**: Extracts and converts disc images from .zip, .rar, and .7z archives, with a sibling-index filter so chdman is never handed a bare track file when a .cue or .gdi is available alongside it
 
 ### 📈 Comprehensive Reporting
 - **Success Rate**: Shows percentage of successful conversions
@@ -136,7 +140,7 @@ XtoCHD includes a comprehensive temp file management system to ensure clean oper
 - **Fast Validation Mode**: Toggle between fast (5-10x faster) and thorough validation
 
 ### 🔧 Convenience Features
-- **Stop Conversion**: Cancel running conversions with proper cleanup
+- **Stop Conversion**: Cancel running conversions with proper cleanup; the Stop button kills the running chdman process tree, not just a flag
 - **Auto-suggest Output**: Automatically suggests output folder location
 - **Open Output Folder**: Quick access to view converted files
 - **Auto-scrolling Log**: Log area automatically scrolls to show latest messages
@@ -144,6 +148,38 @@ XtoCHD includes a comprehensive temp file management system to ensure clean oper
 - **Automatic chdman Detection**: Real-time detection of chdman.exe presence
 - **Temp File Management**: Dedicated temp directory with automatic cleanup and crash recovery
 - **Tools Menu**: Manual temp directory cleanup and monitoring options
+- **Remembers Last Folders**: Input and output paths are persisted across runs, and the log splitter keeps whatever width you dragged it to
+
+## Project Structure
+
+```
+main.py                 Entry point and CHDConverterGUI main window
+xtochd/
+  constants.py          Extension sets and format-priority tables
+  stats.py              ConversionStats dataclass
+  temp_manager.py       Crash-proof temp directory management
+  theme.py              Light/dark Qt stylesheets
+  validators.py         Per-format validation and the conversion-candidate filter
+  workers.py            QThread workers: ConversionWorker, ScanWorker, ValidationWorker
+tests/
+  test_filter_candidates.py
+  test_validators.py
+  test_temp_manager.py
+  test_stats.py
+```
+
+The `main.py` entry point keeps the same file name and responsibilities as before so `build_exe.py` and `build.bat` still work without changes.
+
+## Testing
+
+A pytest suite covers the pure helpers: the conversion-candidate filter, every per-format validator, the temp-directory lifecycle, and the `ConversionStats` math. To run it:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+The full suite runs in well under a second and does not require PyQt or chdman to be present.
 
 ## Building from Source
 
@@ -172,14 +208,15 @@ The executable will be created in the `dist/` folder as `XtoCHD.exe`.
 
 **Note**: The build process will include chdman.exe in the distribution.
 
-## Credits
+## Credits and chdman Licensing
 
 This application relies on **chdman** from the [MAME project](https://www.mamedev.org/). Special thanks to the MAME development team for creating and maintaining this essential tool.
 
 - **chdman**: Part of the MAME project - [GitHub](https://github.com/mamedev/mame)
 - **MAME**: Multiple Arcade Machine Emulator
+- **chdman source (GPL-2.0)**: https://github.com/mamedev/mame - the full source corresponding to the bundled `chdman.exe` is available upstream at the MAME GitHub repository.
 
-**Note**: chdman.exe is included in this distribution for user convenience. It is free software from the MAME project and is used in accordance with their license terms.
+**License note**: `chdman.exe` is included in this distribution for user convenience. MAME as a whole is distributed under the GNU General Public License, version 2; see the `MAME-LICENSE.txt` file that ships next to `chdman.exe` in the release ZIP for the full terms. XtoCHD invokes chdman as a separate process rather than linking against it, so XtoCHD itself remains under the MIT License (see the [LICENSE](LICENSE) file in this repository).
 
 ## License
 

@@ -16,4 +16,10 @@ dist/
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Local tooling / session state
+.claude/
+
+# pytest
+.pytest_cache/

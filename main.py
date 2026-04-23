@@ -1,1115 +1,269 @@
-import sys
+"""XtoCHD - batch CHD converter (entry point + main window).
+
+Domain-model code lives in the ``xtochd`` package: constants, validators,
+temp-directory management, Qt stylesheets, conversion/scan/validation
+workers, and the ConversionStats dataclass. This file only contains the
+main window (``CHDConverterGUI``) and the ``if __name__ == "__main__"``
+bootstrap.
+"""
+
+from __future__ import annotations
+
 import os
-import tempfile
-import shutil
-import zipfile
 import subprocess
-import threading
-import time
-import re
-import struct
-import atexit
-from datetime import datetime
+import sys
+
+from PyQt5.QtCore import QEvent, QFileSystemWatcher, QRect, QSettings, QSize, Qt
+from PyQt5.QtGui import QColor, QFont, QPalette  # noqa: F401 - kept for theme extension
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
-    QFileDialog, QTextEdit, QProgressBar, QListWidget, QListWidgetItem, QCheckBox,
-    QScrollArea, QFrame, QDialog, QButtonGroup, QRadioButton, QStatusBar, QGroupBox,
-    QAction, QMenuBar, QMenu, QMainWindow
+    QAction,
+    QApplication,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSizePolicy,
+    QSplitter,
+    QStackedWidget,
+    QStatusBar,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionButton,
+    QStyleOptionViewItem,
+    QTextEdit,
+    QToolBar,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QFileSystemWatcher
-from PyQt5.QtGui import QColor, QPalette, QFont
 
-COMPATIBLE_EXTS = {
-    '.cue', '.bin', '.iso', '.img', '.nrg', '.gdi', '.toc', '.ccd', '.vcd',
-    '.chd', '.zip', '.cdr', '.hdi', '.vhd', '.vmdk', '.dsk'
-}
-DISK_IMAGE_EXTS = {'.cue', '.bin', '.iso', '.img'}
-
-# Global temp directory management
-class TempFileManager:
-    """Manages temporary files and directories with crash-proof cleanup"""
-    
-    def __init__(self):
-        if getattr(sys, 'frozen', False):
-            # Running as compiled .exe
-            self.app_dir = os.path.dirname(sys.executable)
-        else:
-            # Running as script
-            self.app_dir = os.path.dirname(os.path.abspath(__file__))
-        self.temp_base_dir = os.path.join(self.app_dir, 'temp')
-        self.temp_dirs = []
-        self.cleanup_on_exit = True
-        
-        # Create temp directory if it doesn't exist
-        self._ensure_temp_dir()
-        
-        # Register cleanup on application exit
-        atexit.register(self.cleanup_all_temp_dirs)
-    
-    def _ensure_temp_dir(self):
-        """Ensure the temp directory exists"""
-        try:
-            if not os.path.exists(self.temp_base_dir):
-                os.makedirs(self.temp_base_dir)
-        except Exception as e:
-            print(f"Warning: Could not create temp directory {self.temp_base_dir}: {e}")
-    
-    def create_temp_dir(self, prefix='chdconv_'):
-        """Create a temporary directory within the app's temp folder"""
-        try:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            temp_dir = os.path.join(self.temp_base_dir, f"{prefix}{timestamp}_{os.getpid()}")
-            os.makedirs(temp_dir, exist_ok=True)
-            self.temp_dirs.append(temp_dir)
-            return temp_dir
-        except Exception as e:
-            print(f"Warning: Could not create temp directory: {e}")
-            # Fallback to system temp directory
-            fallback_dir = tempfile.mkdtemp(prefix=prefix)
-            self.temp_dirs.append(fallback_dir)
-            return fallback_dir
-    
-    def cleanup_temp_dir(self, temp_dir):
-        """Clean up a specific temp directory"""
-        if temp_dir in self.temp_dirs:
-            try:
-                if os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir)
-                    self.temp_dirs.remove(temp_dir)
-                    return True
-            except Exception as e:
-                print(f"Warning: Could not clean up temp dir {temp_dir}: {e}")
-        return False
-    
-    def cleanup_all_temp_dirs(self):
-        """Clean up all tracked temp directories"""
-        if not self.cleanup_on_exit:
-            return
-            
-        cleaned_count = 0
-        for temp_dir in self.temp_dirs[:]:  # Copy list to avoid modification during iteration
-            try:
-                if os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir)
-                    cleaned_count += 1
-            except Exception as e:
-                print(f"Warning: Could not clean up temp dir {temp_dir}: {e}")
-        
-        self.temp_dirs.clear()
-        return cleaned_count
-    
-    def cleanup_orphaned_temp_dirs(self):
-        """Clean up any orphaned temp directories from previous runs"""
-        if not os.path.exists(self.temp_base_dir):
-            return 0
-            
-        cleaned_count = 0
-        try:
-            for item in os.listdir(self.temp_base_dir):
-                item_path = os.path.join(self.temp_base_dir, item)
-                if os.path.isdir(item_path):
-                    # Check if this is an old temp directory (older than 1 hour)
-                    try:
-                        stat = os.stat(item_path)
-                        age_hours = (time.time() - stat.st_mtime) / 3600
-                        if age_hours > 1:  # Clean up directories older than 1 hour
-                            shutil.rmtree(item_path)
-                            cleaned_count += 1
-                    except Exception as e:
-                        print(f"Warning: Could not check/clean temp dir {item_path}: {e}")
-        except Exception as e:
-            print(f"Warning: Could not scan temp directory: {e}")
-        
-        return cleaned_count
-    
-    def get_temp_dir_size(self):
-        """Get the total size of the temp directory in bytes"""
-        if not os.path.exists(self.temp_base_dir):
-            return 0
-            
-        total_size = 0
-        try:
-            for root, dirs, files in os.walk(self.temp_base_dir):
-                for file in files:
-                    try:
-                        file_path = os.path.join(root, file)
-                        total_size += os.path.getsize(file_path)
-                    except (OSError, IOError):
-                        pass
-        except Exception:
-            pass
-        
-        return total_size
-    
-    def format_size(self, size_bytes):
-        """Format bytes into human readable format"""
-        if size_bytes == 0:
-            return "0 B"
-        size_names = ["B", "KB", "MB", "GB"]
-        i = 0
-        while size_bytes >= 1024 and i < len(size_names) - 1:
-            size_bytes /= 1024.0
-            i += 1
-        return f"{size_bytes:.1f} {size_names[i]}"
-
-# Global temp file manager instance
-temp_manager = TempFileManager()
-
-# Theme management
-class ThemeManager:
-    @staticmethod
-    def get_light_theme():
-        return """
-        QWidget {
-            background-color: #f5f5f5;
-            color: #333333;
-        }
-        QPushButton {
-            background-color: #e0e0e0;
-            border: 1px solid #cccccc;
-            border-radius: 4px;
-            padding: 6px 12px;
-            font-weight: bold;
-        }
-        QPushButton:hover {
-            background-color: #d0d0d0;
-        }
-        QPushButton:pressed {
-            background-color: #c0c0c0;
-        }
-        QPushButton:disabled {
-            background-color: #f0f0f0;
-            color: #999999;
-        }
-        QLineEdit {
-            background-color: white;
-            border: 1px solid #cccccc;
-            border-radius: 3px;
-            padding: 4px;
-        }
-        QLineEdit:focus {
-            border: 2px solid #4a90e2;
-        }
-        QTextEdit {
-            background-color: white;
-            border: 1px solid #cccccc;
-            border-radius: 3px;
-        }
-        QListWidget {
-            background-color: white;
-            border: 1px solid #cccccc;
-            border-radius: 3px;
-            alternate-background-color: #f9f9f9;
-        }
-        QListWidget::item {
-            padding: 4px;
-        }
-        QListWidget::item:selected {
-            background-color: #e3f2fd;
-            color: #1976d2;
-        }
-        QProgressBar {
-            border: 1px solid #cccccc;
-            border-radius: 3px;
-            text-align: center;
-        }
-        QProgressBar::chunk {
-            background-color: #4caf50;
-            border-radius: 2px;
-        }
-        QStatusBar {
-            background-color: #e0e0e0;
-            border-top: 1px solid #cccccc;
-        }
-        QMenuBar {
-            background-color: #f5f5f5;
-            border-bottom: 1px solid #cccccc;
-        }
-        QMenuBar::item {
-            background-color: transparent;
-            padding: 4px 8px;
-        }
-        QMenuBar::item:selected {
-            background-color: #e0e0e0;
-        }
-        QMenu {
-            background-color: white;
-            border: 1px solid #cccccc;
-        }
-        QMenu::item {
-            padding: 6px 20px;
-        }
-        QMenu::item:selected {
-            background-color: #e3f2fd;
-        }
-        """
-
-    @staticmethod
-    def get_dark_theme():
-        return """
-        QWidget {
-            background-color: #2d2d2d;
-            color: #e0e0e0;
-        }
-        QPushButton {
-            background-color: #404040;
-            border: 1px solid #555555;
-            border-radius: 4px;
-            padding: 6px 12px;
-            font-weight: bold;
-            color: #e0e0e0;
-        }
-        QPushButton:hover {
-            background-color: #505050;
-        }
-        QPushButton:pressed {
-            background-color: #353535;
-        }
-        QPushButton:disabled {
-            background-color: #353535;
-            color: #666666;
-        }
-        QLineEdit {
-            background-color: #404040;
-            border: 1px solid #555555;
-            border-radius: 3px;
-            padding: 4px;
-            color: #e0e0e0;
-        }
-        QLineEdit:focus {
-            border: 2px solid #64b5f6;
-        }
-        QTextEdit {
-            background-color: #404040;
-            border: 1px solid #555555;
-            border-radius: 3px;
-            color: #e0e0e0;
-        }
-        QListWidget {
-            background-color: #404040;
-            border: 1px solid #555555;
-            border-radius: 3px;
-            alternate-background-color: #353535;
-        }
-        QListWidget::item {
-            padding: 4px;
-        }
-        QListWidget::item:selected {
-            background-color: #1976d2;
-            color: white;
-        }
-        QProgressBar {
-            border: 1px solid #555555;
-            border-radius: 3px;
-            text-align: center;
-            background-color: #404040;
-        }
-        QProgressBar::chunk {
-            background-color: #4caf50;
-            border-radius: 2px;
-        }
-        QStatusBar {
-            background-color: #404040;
-            border-top: 1px solid #555555;
-        }
-        QMenuBar {
-            background-color: #2d2d2d;
-            border-bottom: 1px solid #555555;
-        }
-        QMenuBar::item {
-            background-color: transparent;
-            padding: 4px 8px;
-        }
-        QMenuBar::item:selected {
-            background-color: #404040;
-        }
-        QMenu {
-            background-color: #404040;
-            border: 1px solid #555555;
-        }
-        QMenu::item {
-            padding: 6px 20px;
-        }
-        QMenu::item:selected {
-            background-color: #1976d2;
-        }
-        QCheckBox {
-            color: #e0e0e0;
-        }
-        QCheckBox::indicator {
-            width: 16px;
-            height: 16px;
-        }
-        QCheckBox::indicator:unchecked {
-            border: 2px solid #555555;
-            background-color: #404040;
-        }
-        QCheckBox::indicator:checked {
-            border: 2px solid #64b5f6;
-            background-color: #1976d2;
-        }
-        QLabel {
-            color: #e0e0e0;
-        }
-        """
-
-# System detection patterns
-SYSTEM_PATTERNS = {
-    'PlayStation': [r'psx', r'playstation', r'ps1', r'ps-1'],
-    'PlayStation 2': [r'ps2', r'playstation2', r'ps-2'],
-    'Sega Saturn': [r'saturn', r'sega\s*saturn', r'ss'],
-    'Sega Dreamcast': [r'dreamcast', r'dc', r'sega\s*dreamcast'],
-    'Nintendo 64': [r'n64', r'nintendo\s*64', r'nintendo64'],
-    'GameCube': [r'gamecube', r'gc', r'ngc'],
-    'Wii': [r'wii'],
-    'Xbox': [r'xbox'],
-    'Xbox 360': [r'xbox\s*360', r'x360'],
-    'PC Engine': [r'pc\s*engine', r'turbografx', r'pce'],
-    'Neo Geo': [r'neo\s*geo', r'neogeo', r'ng'],
-    'Arcade': [r'arcade', r'mame', r'fba'],
-    'Unknown': []
-}
-
-# File validation functions
-def validate_file(file_path, fast_mode=True):
-    """Basic file validation - check if file exists and has valid header"""
-    try:
-        if not os.path.exists(file_path):
-            return False, "File does not exist"
-        
-        if not os.path.isfile(file_path):
-            return False, "Not a file"
-        
-        # Check file size
-        file_size = os.path.getsize(file_path)
-        if file_size == 0:
-            return False, "Empty file"
-        
-        # Read first 2KB for header validation
-        with open(file_path, 'rb') as f:
-            header = f.read(2048)
-        
-        if len(header) == 0:
-            return False, "Cannot read file"
-        
-        # Basic validation based on file extension
-        ext = os.path.splitext(file_path)[1].lower()
-        
-        if ext == '.iso':
-            return validate_iso_file(header, file_size, fast_mode)
-        elif ext == '.cue':
-            return validate_cue_file(file_path, fast_mode)
-        elif ext == '.bin':
-            return validate_bin_file(header, file_size)
-        elif ext == '.img':
-            return validate_img_file(header, file_size)
-        elif ext == '.zip':
-            return validate_zip_file(file_path, fast_mode)
-        else:
-            # For other supported formats, just check if file is readable
-            return True, "File appears valid"
-            
-    except Exception as e:
-        return False, f"Validation error: {str(e)}"
-
-def validate_iso_file(header, file_size, fast_mode=True):
-    """Validate ISO file format"""
-    try:
-        if fast_mode:
-            # Fast mode: only check file size (2KB minimum)
-            if file_size >= 2048:
-                return True, "ISO file appears valid (fast mode)"
-            else:
-                return False, "ISO file too small"
-        else:
-            # Full mode: check for ISO 9660 signature
-            if len(header) >= 32768:  # ISO files should be at least 32KB
-                # Look for ISO 9660 volume descriptor
-                for i in range(0, min(len(header), 32768), 2048):
-                    if i + 7 < len(header):
-                        if header[i:i+6] == b'CD001\x01':
-                            return True, "Valid ISO 9660 format"
-            
-            # Check for other common ISO formats
-            if file_size >= 2048:  # Minimum size for any ISO
-                return True, "ISO file appears valid"
-            else:
-                return False, "ISO file too small"
-            
-    except Exception as e:
-        return False, f"ISO validation error: {str(e)}"
-
-def validate_cue_file(file_path, fast_mode=True):
-    """Validate CUE file format"""
-    try:
-        if fast_mode:
-            # Fast mode: read 512 bytes instead of 1KB
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read(512)
-        else:
-            # Full mode: read 1KB
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read(1024)
-            
-        if not content.strip():
-            return False, "Empty CUE file"
-        
-        # Check for basic CUE file structure
-        lines = content.split('\n')
-        has_file = False
-        has_track = False
-        
-        for line in lines:
-            line = line.strip().upper()
-            if line.startswith('FILE'):
-                has_file = True
-            elif line.startswith('TRACK'):
-                has_track = True
-                
-        if has_file and has_track:
-            mode_text = " (fast mode)" if fast_mode else ""
-            return True, f"Valid CUE file{mode_text}"
-        else:
-            return False, "Invalid CUE file structure"
-            
-    except Exception as e:
-        return False, f"CUE validation error: {str(e)}"
-
-def validate_bin_file(header, file_size):
-    """Validate BIN file format"""
-    try:
-        # BIN files should be at least 1KB and have some data
-        if file_size >= 1024:
-            return True, "BIN file appears valid"
-        else:
-            return False, "BIN file too small"
-            
-    except Exception as e:
-        return False, f"BIN validation error: {str(e)}"
-
-def validate_img_file(header, file_size):
-    """Validate IMG file format"""
-    try:
-        # IMG files should be at least 1KB
-        if file_size >= 1024:
-            return True, "IMG file appears valid"
-        else:
-            return False, "IMG file too small"
-            
-    except Exception as e:
-        return False, f"IMG validation error: {str(e)}"
-
-def validate_zip_file(file_path, fast_mode=True):
-    """Validate ZIP file format"""
-    try:
-        if fast_mode:
-            # Fast mode: only check header signature
-            with open(file_path, 'rb') as f:
-                header = f.read(4)
-            if header == b'PK\x03\x04':
-                return True, "Valid ZIP file (fast mode)"
-            else:
-                return False, "Invalid ZIP file format"
-        else:
-            # Full mode: complete integrity test
-            with zipfile.ZipFile(file_path, 'r') as z:
-                # Check if ZIP is valid
-                test_result = z.testzip()
-                if test_result is None:
-                    return True, "Valid ZIP file"
-                else:
-                    return False, f"ZIP file corrupted: {test_result}"
-    except zipfile.BadZipFile:
-        return False, "Invalid ZIP file format"
-    except Exception as e:
-        return False, f"ZIP validation error: {str(e)}"
+from xtochd.constants import COMPATIBLE_EXTS
+from xtochd.temp_manager import temp_manager
+from xtochd.theme import ThemeManager
+from xtochd.validators import get_file_info
+from xtochd.workers import ConversionWorker, ScanWorker, ValidationWorker
 
 
+# Role constants stored on each QListWidgetItem so the delegate can paint
+# directly from the item model rather than hitting a parallel dict.
+ROLE_FILE_INFO = Qt.UserRole + 1
+ROLE_FILE_PATH = Qt.UserRole + 2
 
-def get_file_info(file_path, fast_validation=True):
-    """Get comprehensive file information"""
-    try:
-        file_size = os.path.getsize(file_path)
-        ext = os.path.splitext(file_path)[1].lower()
-        
-        # Format file size
-        if file_size >= 1024**3:
-            size_str = f"{file_size / (1024**3):.2f} GB"
-        elif file_size >= 1024**2:
-            size_str = f"{file_size / (1024**2):.2f} MB"
-        elif file_size >= 1024:
-            size_str = f"{file_size / 1024:.2f} KB"
-        else:
-            size_str = f"{file_size} bytes"
-        
-        # Validate file
-        is_valid, validation_msg = validate_file(file_path, fast_validation)
-        
-        return {
-            'name': os.path.basename(file_path),
-            'path': file_path,
-            'size': file_size,
-            'size_str': size_str,
-            'extension': ext,
-            'is_valid': is_valid,
-            'validation_msg': validation_msg
-        }
-        
-    except Exception as e:
-        return {
-            'name': os.path.basename(file_path),
-            'path': file_path,
-            'size': 0,
-            'size_str': 'Unknown',
-            'extension': os.path.splitext(file_path)[1].lower(),
-            'is_valid': False,
-            'validation_msg': f"Error reading file: {str(e)}"
-        }
+_BADGE_ROW_HEIGHT = 34
+_BADGE_WIDTH = 56
+_SIZE_COLUMN_WIDTH = 110
+_STATUS_COLUMN_WIDTH = 86
 
-class ConversionWorker(QThread):
-    progress_updated = pyqtSignal(int)
-    progress_text = pyqtSignal(str)  # For detailed progress messages
-    log_updated = pyqtSignal(str)
-    conversion_finished = pyqtSignal()
-    
-    def __init__(self, files, output_dir, chdman_path):
-        super().__init__()
-        self.files = files
-        self.output_dir = output_dir
-        self.chdman_path = chdman_path
-        self.temp_dirs = []
-        self.conversion_stats = {
-            'total_files': len(files),
-            'successful_conversions': 0,
-            'failed_conversions': 0,
-            'skipped_files': 0,
-            'original_size': 0,
-            'compressed_size': 0,
-            'successful_files': [],
-            'failed_files': [],
-            'skipped_files_list': []
-        }
-        self.cancelled = False
-        
-    def cancel(self):
-        """Cancel the conversion process"""
-        self.cancelled = True
-        # Note: With subprocess.run, we can't cancel individual processes
-        # The timeout will handle hanging processes
-        
-    def kill_chdman_process(self):
-        """Kill the current chdman process and wait for termination"""
-        # Not needed with subprocess.run approach
-        pass
-        
-    def cleanup_incomplete_chd(self):
-        """Remove incomplete CHD file if conversion was stopped"""
-        # Not needed with subprocess.run approach
-        pass
-        
-    def check_cancelled(self):
-        """Check if conversion was cancelled and emit status"""
-        if self.cancelled:
-            self.progress_text.emit("Stopping conversion...")
-            return True
-        return False
-        
-    def run(self):
-        # Create output directory if it doesn't exist
-        if not os.path.exists(self.output_dir):
-            try:
-                os.makedirs(self.output_dir)
-                self.log_updated.emit(f'Created output directory: {self.output_dir}')
-            except Exception as e:
-                self.log_updated.emit(f'Failed to create output directory: {e}')
-                return
-        
-        total_files = len(self.files)
-        current_file = 0
-        
-        for file_path in self.files:
-            if self.check_cancelled():
-                break
-                
-            current_file += 1
-            ext = os.path.splitext(file_path)[1].lower()
-            
-            # Update progress for starting this file
-            progress_percent = int((current_file - 1) / total_files * 100)
-            self.progress_updated.emit(progress_percent)
-            self.progress_text.emit(f"Processing {os.path.basename(file_path)} ({current_file}/{total_files})")
-            
-            if ext == '.zip':
-                # Handle zip files by extracting and converting contents
-                self.log_updated.emit(f'Processing zip: {file_path}')
-                self.process_zip_file(file_path, current_file, total_files)
+# Format family colours for the file-list badge. The badge's job is to tell
+# you what kind of file it is; validation state is signalled separately, so
+# colour-blind users aren't forced to distinguish "green = valid" from "red
+# = invalid" on the same visual element.
+_FAMILY_ARCHIVE = QColor('#3f51b5')   # indigo: .zip / .rar / .7z
+_FAMILY_INDEX = QColor('#f57c00')     # amber:  .cue / .gdi / .toc / .ccd
+_FAMILY_DISC = QColor('#00796b')      # teal:   .iso / .bin / .img / .nrg etc.
+_FAMILY_OTHER = QColor('#546e7a')     # slate:  everything else (.vhd / .dsk / ...)
+_FAMILY_UNKNOWN = QColor('#6c6c6c')   # grey:   extension missing
 
-            else:
-                # Handle regular disk image files
-                self.convert_single_file(file_path, current_file, total_files)
-                
-        if not self.cancelled:
-            self.progress_updated.emit(100)
-            self.progress_text.emit("Conversion complete!")
-            self.log_updated.emit('Conversion complete.')
-            
-            # Generate and display summary
-            self.generate_summary()
-        else:
-            self.progress_text.emit("Conversion stopped.")
-            self.log_updated.emit('Conversion stopped by user.')
-        
-        self.conversion_finished.emit()
-    
-    def generate_summary(self):
-        """Generate a comprehensive conversion summary"""
-        summary = []
-        summary.append("=" * 50)
-        summary.append("CONVERSION SUMMARY")
-        summary.append("=" * 50)
-        
-        # File statistics
-        summary.append(f"Total files processed: {self.conversion_stats['total_files']}")
-        summary.append(f"Successfully converted: {self.conversion_stats['successful_conversions']}")
-        summary.append(f"Failed conversions: {self.conversion_stats['failed_conversions']}")
-        summary.append(f"Skipped (already exist): {self.conversion_stats['skipped_files']}")
-        
-        total_processed = self.conversion_stats['successful_conversions'] + self.conversion_stats['failed_conversions'] + self.conversion_stats['skipped_files']
-        if total_processed > 0:
-            success_rate = (self.conversion_stats['successful_conversions'] / total_processed * 100)
-            summary.append(f"Success rate: {success_rate:.1f}%")
-        
-        # Size statistics
-        if self.conversion_stats['original_size'] > 0:
-            original_gb = self.conversion_stats['original_size'] / (1024**3)
-            compressed_gb = self.conversion_stats['compressed_size'] / (1024**3)
-            saved_gb = original_gb - compressed_gb
-            compression_ratio = (1 - (self.conversion_stats['compressed_size'] / self.conversion_stats['original_size'])) * 100
-            
-            summary.append("")
-            summary.append("SIZE STATISTICS:")
-            summary.append(f"Original total size: {original_gb:.2f} GB")
-            summary.append(f"Compressed total size: {compressed_gb:.2f} GB")
-            summary.append(f"Space saved: {saved_gb:.2f} GB")
-            summary.append(f"Compression ratio: {compression_ratio:.1f}%")
-        
-        # Successful files list
-        if self.conversion_stats['successful_files']:
-            summary.append("")
-            summary.append("SUCCESSFULLY CONVERTED:")
-            for file_info in self.conversion_stats['successful_files']:
-                summary.append(f"  ✓ {file_info['name']} ({file_info['original_size_mb']:.1f} MB → {file_info['compressed_size_mb']:.1f} MB)")
-        
-        # Skipped files list
-        if self.conversion_stats['skipped_files_list']:
-            summary.append("")
-            summary.append("SKIPPED (CHD already exists):")
-            for file_name in self.conversion_stats['skipped_files_list']:
-                summary.append(f"  ⏭ {file_name}")
-        
-        # Failed files list
-        if self.conversion_stats['failed_files']:
-            summary.append("")
-            summary.append("FAILED CONVERSIONS:")
-            for file_name in self.conversion_stats['failed_files']:
-                summary.append(f"  ✗ {file_name}")
-        
+_ARCHIVE_EXTS = {'.zip', '.rar', '.7z'}
+_INDEX_EXTS = {'.cue', '.gdi', '.toc', '.ccd'}
+_DISC_EXTS = {'.iso', '.bin', '.img', '.nrg', '.vcd', '.cdr'}
 
-        
-        summary.append("=" * 50)
-        
-        # Display summary in log
-        for line in summary:
-            self.log_updated.emit(line)
-    
-    def process_zip_file(self, zip_path, current_file, total_files):
-        """Extract zip and convert all compatible files inside"""
-        if self.check_cancelled():
-            return
-            
-        self.progress_text.emit(f"Extracting {os.path.basename(zip_path)}...")
-        temp_dir = temp_manager.create_temp_dir(prefix='chdconv_zip_')
-        self.temp_dirs.append(temp_dir)
-        
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as z:
-                # Get list of files in zip for progress tracking
-                zip_files = z.namelist()
-                total_zip_files = len(zip_files)
-                
-                # First, check if any CHD files already exist for files in this zip
-                existing_chd_count = 0
-                for zip_file in zip_files:
-                    if self.check_cancelled():
-                        return
-                    # Get the base name of the file in the zip
-                    base_name = os.path.splitext(os.path.basename(zip_file))[0]
-                    ext = os.path.splitext(zip_file)[1].lower()
-                    if ext in DISK_IMAGE_EXTS:
-                        chd_file = os.path.join(self.output_dir, base_name + '.chd')
-                        if os.path.exists(chd_file):
-                            existing_chd_count += 1
-                            self.log_updated.emit(f'Skipped: {base_name} (CHD already exists)')
-                            self.conversion_stats['skipped_files'] += 1
-                            self.conversion_stats['skipped_files_list'].append(base_name)
-                
-                # If all files already exist, skip extraction entirely
-                if existing_chd_count == len([f for f in zip_files if os.path.splitext(f)[1].lower() in DISK_IMAGE_EXTS]):
-                    self.log_updated.emit(f'All files in {os.path.basename(zip_path)} already have CHD versions. Skipping extraction.')
-                    return
-                
-                # Extract files that need processing
-                for idx, zip_file in enumerate(zip_files):
-                    if self.check_cancelled():
-                        return
-                    
-                    # Check if this specific file already has a CHD version
-                    base_name = os.path.splitext(os.path.basename(zip_file))[0]
-                    ext = os.path.splitext(zip_file)[1].lower()
-                    if ext in DISK_IMAGE_EXTS:
-                        chd_file = os.path.join(self.output_dir, base_name + '.chd')
-                        if os.path.exists(chd_file):
-                            # Skip extraction for this file
-                            continue
-                    
-                    z.extract(zip_file, temp_dir)
-                    # Update progress during extraction
-                    extraction_progress = int((idx + 1) / total_zip_files * 20)  # 20% for extraction
-                    file_progress = int((current_file - 1) / total_files * 100)
-                    total_progress = file_progress + extraction_progress
-                    self.progress_updated.emit(min(total_progress, 99))
-                    self.progress_text.emit(f"Extracting {zip_file} from {os.path.basename(zip_path)}")
-            
-            if self.check_cancelled():
-                return
-                
-            # Find all disk images in extracted content
-            self.progress_text.emit("Scanning extracted files...")
-            disk_images = []
-            for root, _, files in os.walk(temp_dir):
-                for fname in files:
-                    if self.check_cancelled():
-                        return
-                    ext = os.path.splitext(fname)[1].lower()
-                    if ext in DISK_IMAGE_EXTS:
-                        disk_images.append(os.path.join(root, fname))
-            
-            # Convert each disk image found in zip
-            for idx, extracted_file in enumerate(disk_images):
-                if self.check_cancelled():
-                    return
-                self.progress_text.emit(f"Converting extracted file {os.path.basename(extracted_file)} ({idx+1}/{len(disk_images)})")
-                self.convert_single_file(extracted_file, current_file, total_files)
-                        
-        except Exception as e:
-            self.log_updated.emit(f'Failed to process zip {zip_path}: {e}')
-    
 
-    
-    def convert_single_file(self, file_path, current_file, total_files):
-        """Convert a single disk image file to CHD"""
-        if self.check_cancelled():
-            return
-        ext = os.path.splitext(file_path)[1].lower()
-        base_name = os.path.basename(file_path)
-        base_name_without_ext = os.path.splitext(base_name)[0]
-        
-        # Check if CHD file already exists in output directory
-        output_chd_path = os.path.join(self.output_dir, base_name_without_ext + '.chd')
-        if os.path.exists(output_chd_path):
-            self.log_updated.emit(f'Skipped: {base_name} (CHD already exists: {os.path.basename(output_chd_path)})')
-            self.conversion_stats['skipped_files'] += 1
-            self.conversion_stats['skipped_files_list'].append(base_name)
-            return
-        
-        self.log_updated.emit(f'Converting: {file_path}')
-        self.progress_text.emit(f"Converting {base_name} to CHD format...")
-        
-        # Get original file size
-        original_size = os.path.getsize(file_path)
-        self.conversion_stats['original_size'] += original_size
-        
-        try:
-            if ext == '.cue':
-                cmd = [self.chdman_path, 'createcd', '-i', file_path, '-o', file_path + '.chd']
-            elif ext in {'.iso', '.bin', '.img'}:
-                cmd = [self.chdman_path, 'createcd', '-i', file_path, '-o', file_path + '.chd']
-            elif ext in COMPATIBLE_EXTS:
-                # For other supported formats, try the same command
-                cmd = [self.chdman_path, 'createcd', '-i', file_path, '-o', file_path + '.chd']
-            else:
-                self.log_updated.emit(f'Skipped unsupported file type ({ext}): {file_path}')
-                self.conversion_stats['failed_conversions'] += 1
-                self.conversion_stats['failed_files'].append(os.path.basename(file_path))
-                return
-                
-            # Use CREATE_NO_WINDOW to hide the CMD window
-            self.progress_text.emit(f"Running CHD conversion on {base_name}...")
-            
-            result = subprocess.run(cmd, capture_output=True, text=True, 
-                                  creationflags=subprocess.CREATE_NO_WINDOW)
-            
-            stdout = result.stdout
-            stderr = result.stderr
-            result_code = result.returncode
-            
-            # Process completed
-            
-            if result_code == 0:
-                # Get the generated CHD file path
-                chd_file_path = file_path + '.chd'
-                
-                # Create output filename
-                base_name_without_ext = os.path.splitext(base_name)[0]
-                output_chd_path = os.path.join(self.output_dir, base_name_without_ext + '.chd')
-                
-                # Move CHD file to output directory
-                try:
-                    # Ensure output directory exists
-                    os.makedirs(self.output_dir, exist_ok=True)
-                    
-                    # Move the file to output directory
-                    shutil.move(chd_file_path, output_chd_path)
-                    
-                    # Get compressed file size
-                    compressed_size = os.path.getsize(output_chd_path)
-                    self.conversion_stats['compressed_size'] += compressed_size
-                    
-                    # Add to successful conversions
-                    self.conversion_stats['successful_conversions'] += 1
-                    self.conversion_stats['successful_files'].append({
-                        'name': os.path.basename(output_chd_path),
-                        'original_size_mb': original_size / (1024**2),
-                        'compressed_size_mb': compressed_size / (1024**2)
-                    })
-                    
-                    self.log_updated.emit(f'Success: {output_chd_path}')
-                    self.progress_text.emit(f"✓ Completed: {os.path.basename(output_chd_path)}")
-                    
-                    # Clean up temp files for this specific conversion
-                    self.cleanup_temp_files_for_file(file_path)
-                    
-                except Exception as move_error:
-                    # If move fails, try to clean up and report error
-                    if os.path.exists(chd_file_path):
-                        try:
-                            os.remove(chd_file_path)
-                        except:
-                            pass
-                    self.log_updated.emit(f'Error moving file to output directory: {move_error}')
-                    self.progress_text.emit(f"✗ Failed to move: {base_name}")
-                    self.conversion_stats['failed_conversions'] += 1
-                    self.conversion_stats['failed_files'].append(os.path.basename(file_path))
-            else:
-                # Remove incomplete CHD file on failure
-                chd_file_path = file_path + '.chd'
-                if os.path.exists(chd_file_path):
-                    try:
-                        os.remove(chd_file_path)
-                        self.log_updated.emit(f'Removed incomplete file: {os.path.basename(chd_file_path)}')
-                    except Exception as e:
-                        self.log_updated.emit(f'Could not remove incomplete file: {e}')
-                
-                self.log_updated.emit(f'Error converting {file_path}: {stderr}')
-                self.progress_text.emit(f"✗ Failed: {base_name}")
-                self.conversion_stats['failed_conversions'] += 1
-                self.conversion_stats['failed_files'].append(os.path.basename(file_path))
-                
-        except Exception as e:
-            # Remove incomplete CHD file on exception
-            chd_file_path = file_path + '.chd'
-            if os.path.exists(chd_file_path):
-                try:
-                    os.remove(chd_file_path)
-                    self.log_updated.emit(f'Removed incomplete file: {os.path.basename(chd_file_path)}')
-                except Exception as cleanup_error:
-                    self.log_updated.emit(f'Could not remove incomplete file: {cleanup_error}')
-            
-            self.log_updated.emit(f'Exception: {e}')
-            self.progress_text.emit(f"✗ Error: {base_name}")
-            self.conversion_stats['failed_conversions'] += 1
-            self.conversion_stats['failed_files'].append(os.path.basename(file_path))
-    
-    def cleanup_temp_files_for_file(self, file_path):
-        """Clean up temp files related to a specific file conversion"""
-        try:
-            # Look for any temp files that might have been created for this specific file
-            base_name = os.path.splitext(os.path.basename(file_path))[0]
-            
-            # Check if there are any temp files with this base name
-            for temp_dir in self.temp_dirs:
-                if os.path.exists(temp_dir):
-                    for root, dirs, files in os.walk(temp_dir):
-                        for file in files:
-                            if base_name in file:
-                                try:
-                                    file_path_to_remove = os.path.join(root, file)
-                                    os.remove(file_path_to_remove)
-                                except Exception:
-                                    pass
-        except Exception:
-            pass  # Silently fail if cleanup fails
-    
-    def cleanup_temp_dirs(self):
-        """Clean up temporary directories created during conversion"""
-        cleaned_count = 0
-        for d in self.temp_dirs:
-            if temp_manager.cleanup_temp_dir(d):
-                cleaned_count += 1
-        self.temp_dirs = []
-        return cleaned_count
+def _badge_colour_for_ext(ext: str) -> QColor:
+    ext = (ext or '').lower()
+    if not ext:
+        return _FAMILY_UNKNOWN
+    if ext in _ARCHIVE_EXTS:
+        return _FAMILY_ARCHIVE
+    if ext in _INDEX_EXTS:
+        return _FAMILY_INDEX
+    if ext in _DISC_EXTS:
+        return _FAMILY_DISC
+    return _FAMILY_OTHER
 
-class ScanWorker(QThread):
-    scan_progress = pyqtSignal(str)
-    scan_complete = pyqtSignal(list)
-    scan_error = pyqtSignal(str)
-    
-    def __init__(self, input_paths):
-        super().__init__()
-        self.input_paths = input_paths if isinstance(input_paths, list) else [input_paths]
-        
-    def run(self):
-        try:
-            self.scan_progress.emit('Scanning for files...')
-            found = []
-            
-            for input_path in self.input_paths:
-                if os.path.isfile(input_path):
-                    ext = os.path.splitext(input_path)[1].lower()
-                    if ext in COMPATIBLE_EXTS:
-                        found.append(input_path)
-                        self.scan_progress.emit(f'Found: {os.path.basename(input_path)}')
-                else:
-                    for root, dirs, files in os.walk(input_path):
-                        dirs[:] = [d for d in dirs if not d.startswith('.')]
-                        for fname in files:
-                            ext = os.path.splitext(fname)[1].lower()
-                            if ext in COMPATIBLE_EXTS:
-                                fpath = os.path.join(root, fname)
-                                found.append(fpath)
-                                self.scan_progress.emit(f'Found: {os.path.basename(fpath)}')
-            
-            self.scan_complete.emit(found)
-        except Exception as e:
-            self.scan_error.emit(f'Scan error: {e}')
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
+class FileListDelegate(QStyledItemDelegate):
+    """Paints one file row: checkbox, format badge, filename, size, status icon.
 
-class ValidationWorker(QThread):
-    validation_complete = pyqtSignal(dict)
-    validation_progress = pyqtSignal(str, dict)  # file_path, file_info
-    
-    def __init__(self, file_paths, max_workers=4, fast_validation=True):
-        super().__init__()
-        self.file_paths = file_paths
-        self.max_workers = max_workers
-        self.fast_validation = fast_validation
-        self._lock = threading.Lock()
-        
-    def validate_single_file(self, file_path):
-        """Validate a single file - used by thread pool"""
-        try:
-            file_info = get_file_info(file_path, self.fast_validation)
-            return file_path, file_info
-        except Exception as e:
-            # If validation fails, create basic info
-            file_info = {
-                'name': os.path.basename(file_path),
-                'path': file_path,
-                'size': 0,
-                'size_str': 'Unknown',
-                'extension': os.path.splitext(file_path)[1].lower(),
-                'is_valid': False,
-                'validation_msg': f"Validation error: {str(e)}"
-            }
-            return file_path, file_info
-        
-    def run(self):
-        """Validate files in parallel using thread pool"""
-        validation_results = {}
-        
-        # Use ThreadPoolExecutor for parallel validation
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all validation tasks
-            future_to_file = {executor.submit(self.validate_single_file, file_path): file_path 
-                            for file_path in self.file_paths}
-            
-            # Process completed validations as they finish
-            for future in as_completed(future_to_file):
-                file_path, file_info = future.result()
-                
-                # Thread-safe update of results
-                with self._lock:
-                    validation_results[file_path] = file_info
-                
-                # Emit individual result as it completes
-                self.validation_progress.emit(file_path, file_info)
-        
-        # Emit final complete signal with all results
-        self.validation_complete.emit(validation_results)
+    Data flow: ``ROLE_FILE_INFO`` carries the dict from ``get_file_info``;
+    ``Qt.CheckStateRole`` is the user's include/exclude choice. The
+    delegate paints from these two; clicks on the checkbox rectangle
+    toggle the check state via ``editorEvent``.
+    """
 
-class InputSelectionDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Select Input Type")
-        self.setModal(True)
-        self.setFixedSize(300, 150)
-        self.selected_path = None
-        self.init_ui()
-        
-    def init_ui(self):
-        layout = QVBoxLayout()
-        
-        # Title
-        title = QLabel("What would you like to convert?")
-        title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        layout.addWidget(title)
-        
-        # Radio buttons
-        self.file_radio = QRadioButton("Select a single file")
-        self.folder_radio = QRadioButton("Select a folder (batch processing)")
-        self.folder_radio.setChecked(True)  # Default to folder selection
-        
-        layout.addWidget(self.file_radio)
-        layout.addWidget(self.folder_radio)
-        
-        # Buttons
-        button_layout = QHBoxLayout()
-        ok_button = QPushButton("OK")
-        cancel_button = QPushButton("Cancel")
-        
-        ok_button.clicked.connect(self.accept)
-        cancel_button.clicked.connect(self.reject)
-        
-        button_layout.addWidget(ok_button)
-        button_layout.addWidget(cancel_button)
-        layout.addLayout(button_layout)
-        
-        central_widget.setLayout(layout)
-    
-    def get_selection_type(self):
-        return "file" if self.file_radio.isChecked() else "folder"
+        # Selected-row text colour varies by theme: on dark the highlight
+        # is saturated blue so white text reads fine, but on light the
+        # highlight is a pale blue and white disappears into it.
+        # apply_theme() updates this via set_selected_text_color().
+        self._selected_text_color = QColor('#ffffff')
+
+    def set_selected_text_color(self, colour: QColor) -> None:
+        self._selected_text_color = QColor(colour)
+
+    def paint(self, painter, option, index):
+        painter.save()
+
+        # Draw the standard item chrome (selection/hover/alternating-row
+        # background) but suppress everything we paint ourselves: the
+        # default text, the default icon, and - critically - the default
+        # check indicator, otherwise Qt draws its own checkbox at the left
+        # and we'd render a second one over the top of it.
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        opt.icon = opt.icon.__class__()  # blank icon
+        opt.features &= ~QStyleOptionViewItem.HasCheckIndicator
+        opt.checkState = Qt.Unchecked
+        style = opt.widget.style() if opt.widget else QApplication.style()
+        style.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)
+
+        file_info = index.data(ROLE_FILE_INFO) or {}
+        check_state = index.data(Qt.CheckStateRole)
+        ext_raw = file_info.get('extension') or ''
+        ext_label = ext_raw.lstrip('.').upper() or '?'
+        name = file_info.get('name') or index.data(Qt.DisplayRole) or ''
+        size_str = file_info.get('size_str') or ''
+        is_valid = file_info.get('is_valid')
+        # The key is absent from the dict while validation is still running;
+        # that is a different state from "validated and rejected".
+        validation_pending = 'is_valid' not in file_info
+
+        rect = option.rect.adjusted(10, 0, -10, 0)
+        mid_y = rect.top() + rect.height() // 2
+
+        # --- checkbox --------------------------------------------------
+        cb_size = 18
+        cb_rect = QRect(rect.left(), mid_y - cb_size // 2, cb_size, cb_size)
+        cb_opt = QStyleOptionButton()
+        cb_opt.rect = cb_rect
+        cb_opt.state = QStyle.State_Enabled
+        cb_opt.state |= (
+            QStyle.State_On if check_state == Qt.Checked else QStyle.State_Off
+        )
+        style.drawPrimitive(QStyle.PE_IndicatorCheckBox, cb_opt, painter)
+
+        # --- format badge (colour encodes format family, NOT validity) -
+        badge_rect = QRect(cb_rect.right() + 12, mid_y - 11, _BADGE_WIDTH, 22)
+        painter.setRenderHint(painter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(_badge_colour_for_ext(ext_raw))
+        painter.drawRoundedRect(badge_rect, 4, 4)
+        badge_font = QFont(option.font)
+        badge_font.setBold(True)
+        badge_font.setPointSize(max(7, badge_font.pointSize() - 1))
+        painter.setFont(badge_font)
+        painter.setPen(QColor('#ffffff'))
+        painter.drawText(badge_rect, Qt.AlignCenter, ext_label)
+
+        # --- selected-row text colour ---------------------------------
+        # QPalette.HighlightedText doesn't always follow the QSS
+        # `QListWidget::item:selected { color: ... }` rule, so we carry
+        # the per-theme colour on the delegate itself.
+        if option.state & QStyle.State_Selected:
+            text_color = self._selected_text_color
+        else:
+            text_color = option.palette.color(QPalette.Text)
+
+        # --- size (right-aligned, anchored to the item right) ---------
+        size_rect = QRect(
+            rect.right() - _SIZE_COLUMN_WIDTH,
+            rect.top(), _SIZE_COLUMN_WIDTH, rect.height(),
+        )
+        painter.setFont(option.font)
+        painter.setPen(text_color)
+        painter.drawText(size_rect, Qt.AlignRight | Qt.AlignVCenter, size_str)
+
+        # --- status pill (invalid / pending only; valid == nothing) ---
+        # "Absence is good": a clean row means the file is valid. Anything
+        # odd gets a deliberately uncomfortable pill so it jumps out of a
+        # long list.
+        status_right = size_rect.left() - 10
+        if not validation_pending and is_valid is False:
+            pill_w = _STATUS_COLUMN_WIDTH
+            pill_rect = QRect(status_right - pill_w, mid_y - 9, pill_w, 18)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor('#c62828'))
+            painter.drawRoundedRect(pill_rect, 4, 4)
+            painter.setPen(QColor('#ffffff'))
+            painter.drawText(pill_rect, Qt.AlignCenter, 'INVALID')
+            name_right_limit = pill_rect.left()
+        elif validation_pending:
+            pill_w = _STATUS_COLUMN_WIDTH
+            pill_rect = QRect(status_right - pill_w, mid_y - 9, pill_w, 18)
+            pending_pen = QColor('#9e9e9e')
+            painter.setPen(pending_pen)
+            painter.drawText(pill_rect, Qt.AlignRight | Qt.AlignVCenter, 'validating...')
+            name_right_limit = pill_rect.left()
+        else:
+            name_right_limit = size_rect.left()
+
+        # --- filename (takes whatever horizontal slack is left) -------
+        name_left = badge_rect.right() + 12
+        name_rect = QRect(
+            name_left, rect.top(),
+            max(0, name_right_limit - name_left - 12), rect.height(),
+        )
+        painter.setPen(text_color)
+        elided = option.fontMetrics.elidedText(name, Qt.ElideRight, name_rect.width())
+        painter.drawText(name_rect, Qt.AlignLeft | Qt.AlignVCenter, elided)
+
+        painter.restore()
+
+    def sizeHint(self, _option, _index):
+        return QSize(0, _BADGE_ROW_HEIGHT)
+
+    def editorEvent(self, event, model, option, index):
+        if event.type() in (QEvent.MouseButtonRelease, QEvent.MouseButtonDblClick):
+            rect = option.rect.adjusted(10, 0, -10, 0)
+            mid_y = rect.top() + rect.height() // 2
+            cb_rect = QRect(rect.left(), mid_y - 9, 18, 18)
+            # Clicks anywhere on the row toggle the check state; the
+            # checkbox rect gives the obvious affordance.
+            if event.button() == Qt.LeftButton and (
+                cb_rect.contains(event.pos()) or event.type() == QEvent.MouseButtonDblClick
+            ):
+                current = index.data(Qt.CheckStateRole)
+                new_state = Qt.Unchecked if current == Qt.Checked else Qt.Checked
+                model.setData(index, new_state, Qt.CheckStateRole)
+                return True
+        return super().editorEvent(event, model, option, index)
+
 
 class CHDConverterGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('XtoCHD - Batch CHD Converter')
-        self.setGeometry(100, 100, 1100, 700)
+        self.setGeometry(100, 100, 1200, 750)
+        self.setMinimumSize(980, 620)
         self.temp_dirs = []
         self.found_files = []
         self.conversion_worker = None
         self.scan_worker = None
-        
+
+        # Persisted settings (last input/output folders, splitter state, etc.)
+        self.settings = QSettings('XtoCHD', 'XtoCHD')
+
         # Theme management
         self.current_theme = 'dark'  # Default to dark theme
-        
+
         self.init_ui()
         self.setup_menu_bar()
         self.apply_theme(self.current_theme)
-        
-        # Setup file system watcher for chdman.exe
-        self.app_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # Setup file system watcher for chdman.exe (next to this script /
+        # the frozen .exe, depending on how the app was launched).
+        if getattr(sys, 'frozen', False):
+            self.app_dir = os.path.dirname(sys.executable)
+        else:
+            self.app_dir = os.path.dirname(os.path.abspath(__file__))
         self.chdman_path = None
         self.fs_watcher = QFileSystemWatcher()
         self.fs_watcher.addPath(self.app_dir)
@@ -1117,172 +271,185 @@ class CHDConverterGUI(QMainWindow):
         self.fs_watcher.fileChanged.connect(self.on_chdman_file_changed)
         self.auto_detect_chdman()
         self.update_start_button_state()
-        
+
         # Perform startup cleanup of orphaned temp files
         self.perform_startup_cleanup()
-        
+
         # Drag-and-drop support
         self.setAcceptDrops(True)
+
+        # Restore last-used folders and persist any future changes.
+        self._restore_last_folders()
+        self.input_path_edit.textChanged.connect(self._save_last_input)
+        self.output_path_edit.textChanged.connect(self._save_last_output)
+
+    def _restore_last_folders(self):
+        last_input = self.settings.value('last_input', '', type=str)
+        last_output = self.settings.value('last_output', '', type=str)
+        if last_input and os.path.exists(last_input):
+            self.input_path_edit.setText(last_input)
+            self.scan_for_files_auto(last_input)
+        if last_output:
+            self.output_path_edit.setText(last_output)
+        self.update_start_button_state()
+
+    def _save_last_input(self, text):
+        if text:
+            self.settings.setValue('last_input', text)
+
+    def _save_last_output(self, text):
+        if text:
+            self.settings.setValue('last_output', text)
 
     def setup_menu_bar(self):
         """Setup the menu bar with theme switching options"""
         menubar = self.menuBar()
-        
-        # View menu
+
         view_menu = menubar.addMenu('View')
-        
-        # Theme submenu
         theme_menu = view_menu.addMenu('Theme')
-        
-        # Light theme action
+
         light_action = QAction('Light Theme', self)
         light_action.setCheckable(True)
         light_action.setChecked(self.current_theme == 'light')
         light_action.triggered.connect(lambda: self.switch_theme('light'))
         theme_menu.addAction(light_action)
-        
-        # Dark theme action
+
         dark_action = QAction('Dark Theme', self)
         dark_action.setCheckable(True)
         dark_action.setChecked(self.current_theme == 'dark')
         dark_action.triggered.connect(lambda: self.switch_theme('dark'))
         theme_menu.addAction(dark_action)
-        
-        # Store actions for later use
+
         self.light_theme_action = light_action
         self.dark_theme_action = dark_action
-        
-        # Tools menu
+
         tools_menu = menubar.addMenu('Tools')
-        
-        # Temp directory management
+
         temp_info_action = QAction('Temp Directory Info', self)
         temp_info_action.triggered.connect(self.show_temp_directory_info)
         tools_menu.addAction(temp_info_action)
-        
+
         cleanup_action = QAction('Clean Temp Directory', self)
         cleanup_action.triggered.connect(self.cleanup_temp_directory)
         tools_menu.addAction(cleanup_action)
 
     def switch_theme(self, theme):
-        """Switch between light and dark themes"""
         if theme != self.current_theme:
             self.current_theme = theme
             self.apply_theme(theme)
-            
-            # Update menu checkmarks
             if hasattr(self, 'light_theme_action'):
                 self.light_theme_action.setChecked(theme == 'light')
             if hasattr(self, 'dark_theme_action'):
                 self.dark_theme_action.setChecked(theme == 'dark')
 
     def apply_theme(self, theme):
-        """Apply the specified theme to the application"""
         if theme == 'dark':
             self.setStyleSheet(ThemeManager.get_dark_theme())
         else:
             self.setStyleSheet(ThemeManager.get_light_theme())
-        
-        # Update specific widget styles that need custom handling
         self.update_widget_styles_for_theme(theme)
 
-    def update_widget_styles_for_theme(self, theme):
-        """Update specific widget styles that need custom handling"""
-        if theme == 'dark':
-            # Update file info text background for dark theme
-            if hasattr(self, 'file_info_text'):
-                self.file_info_text.setStyleSheet("""
-                    QTextEdit { 
-                        background-color: #404040; 
-                        border: 1px solid #555555; 
-                        color: #e0e0e0;
-                    }
-                """)
-        else:
-            # Update file info text background for light theme
-            if hasattr(self, 'file_info_text'):
-                self.file_info_text.setStyleSheet("""
-                    QTextEdit { 
-                        background-color: #f0f0f0; 
-                        border: 1px solid #ccc; 
-                        color: #333333;
-                    }
-                """)
+        # Keep the file-list delegate's selected-row text colour in sync
+        # with the theme's highlight background so selected rows stay
+        # readable. Dark highlight (#1976d2) pairs with white; the light
+        # highlight (#e3f2fd) pairs with medium blue.
+        if hasattr(self, 'file_list'):
+            delegate = self.file_list.itemDelegate()
+            if isinstance(delegate, FileListDelegate):
+                delegate.set_selected_text_color(
+                    QColor('#ffffff') if theme == 'dark' else QColor('#1976d2')
+                )
+                self.file_list.viewport().update()
 
-    def on_chdman_dir_changed(self, path):
-        # Directory changed, re-check for chdman.exe
+    def update_widget_styles_for_theme(self, theme):
+        if not hasattr(self, 'file_info_text'):
+            return
+        if theme == 'dark':
+            self.file_info_text.setStyleSheet(
+                "QTextEdit { background-color: #404040;"
+                " border: 1px solid #555555; color: #e0e0e0; }"
+            )
+        else:
+            self.file_info_text.setStyleSheet(
+                "QTextEdit { background-color: #f0f0f0;"
+                " border: 1px solid #ccc; color: #333333; }"
+            )
+
+    def on_chdman_dir_changed(self, _path):
         self.auto_detect_chdman()
         self.update_start_button_state()
-        # If chdman.exe is still not present, watch for the file directly
-        import os
         chdman_file = os.path.join(self.app_dir, 'chdman.exe')
         if not os.path.isfile(chdman_file):
             if chdman_file not in self.fs_watcher.files():
                 self.fs_watcher.addPath(chdman_file)
         else:
-            # If found, stop watching the file directly
             if chdman_file in self.fs_watcher.files():
                 self.fs_watcher.removePath(chdman_file)
 
     def on_chdman_file_changed(self, path):
-        # chdman.exe file changed (created, deleted, or modified)
         self.auto_detect_chdman()
         self.update_start_button_state()
-        # If chdman.exe is now present, stop watching the file
-        import os
-        if os.path.isfile(path):
-            if path in self.fs_watcher.files():
-                self.fs_watcher.removePath(path)
+        if os.path.isfile(path) and path in self.fs_watcher.files():
+            self.fs_watcher.removePath(path)
 
     def auto_detect_chdman(self):
-        # Check if chdman.exe exists in the app directory or cwd
-        import os
         chdman_in_app_dir = os.path.join(self.app_dir, 'chdman.exe')
         if os.path.isfile(chdman_in_app_dir):
             self.chdman_path = chdman_in_app_dir
-            self.chdman_status_indicator.setText("✓ Found in application folder")
-            self.chdman_status_indicator.setStyleSheet("font-weight: bold; color: green;")
-        else:
-            chdman_in_cwd = os.path.join(os.getcwd(), 'chdman.exe')
-            if os.path.isfile(chdman_in_cwd):
-                self.chdman_path = chdman_in_cwd
-                self.chdman_status_indicator.setText("✓ Found in current directory")
-                self.chdman_status_indicator.setStyleSheet("font-weight: bold; color: green;")
-            else:
-                self.chdman_path = None
-                self.chdman_status_indicator.setText("✗ Not found - Please place chdman.exe in the same folder as XtoCHD")
-                self.chdman_status_indicator.setStyleSheet("font-weight: bold; color: red;")
+            self.chdman_status_indicator.setText("chdman: ✓ Ready")
+            self.chdman_status_indicator.setToolTip(
+                f"Using chdman.exe in the application folder:\n{chdman_in_app_dir}"
+            )
+            self.chdman_status_indicator.setStyleSheet(
+                "padding: 0 10px; font-weight: 600; color: #4caf50;"
+            )
+            return
+        chdman_in_cwd = os.path.join(os.getcwd(), 'chdman.exe')
+        if os.path.isfile(chdman_in_cwd):
+            self.chdman_path = chdman_in_cwd
+            self.chdman_status_indicator.setText("chdman: ✓ Ready")
+            self.chdman_status_indicator.setToolTip(
+                f"Using chdman.exe in the current directory:\n{chdman_in_cwd}"
+            )
+            self.chdman_status_indicator.setStyleSheet(
+                "padding: 0 10px; font-weight: 600; color: #4caf50;"
+            )
+            return
+        self.chdman_path = None
+        self.chdman_status_indicator.setText("chdman: ✗ Missing")
+        self.chdman_status_indicator.setToolTip(
+            "chdman.exe not found. Place it next to XtoCHD and it will be "
+            "picked up automatically."
+        )
+        self.chdman_status_indicator.setStyleSheet(
+            "padding: 0 10px; font-weight: 600; color: #f44336;"
+        )
 
     def update_start_button_state(self):
-        """Update start button enabled state based on chdman availability and other conditions"""
         if not hasattr(self, 'start_btn') or self.start_btn is None:
             return
-        chdman_available = bool(hasattr(self, 'chdman_path') and self.chdman_path and os.path.isfile(self.chdman_path))
-        files_available = bool(hasattr(self, 'found_files') and len(self.found_files) > 0)
-        output_set = bool(hasattr(self, 'output_path_edit') and self.output_path_edit.text().strip() != "")
+        chdman_available = bool(
+            getattr(self, 'chdman_path', None) and os.path.isfile(self.chdman_path)
+        )
+        files_available = bool(getattr(self, 'found_files', None))
+        output_set = bool(
+            hasattr(self, 'output_path_edit') and self.output_path_edit.text().strip()
+        )
         self.start_btn.setEnabled(chdman_available and files_available and output_set)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            # Check if the dropped item is a supported file or folder
-            urls = event.mimeData().urls()
-            if urls:
-                path = urls[0].toLocalFile()
-                if os.path.isdir(path):
-                    # Always accept folders
-                    event.acceptProposedAction()
-                elif os.path.isfile(path):
-                    # Only accept supported file types
-                    ext = os.path.splitext(path)[1].lower()
-                    if ext in COMPATIBLE_EXTS:
-                        event.acceptProposedAction()
-                    else:
-                        # Reject unsupported files
-                        event.ignore()
-                else:
-                    event.ignore()
-            else:
-                event.ignore()
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return
+        urls = event.mimeData().urls()
+        if not urls:
+            event.ignore()
+            return
+        path = urls[0].toLocalFile()
+        if os.path.isdir(path):
+            event.acceptProposedAction()
+        elif os.path.isfile(path) and os.path.splitext(path)[1].lower() in COMPATIBLE_EXTS:
+            event.acceptProposedAction()
         else:
             event.ignore()
 
@@ -1290,185 +457,374 @@ class CHDConverterGUI(QMainWindow):
         paths = [url.toLocalFile() for url in event.mimeData().urls()]
         if not paths:
             return
-            
-        # Handle multiple files/folders
+
         supported_paths = []
         unsupported_files = []
-        
         for path in paths:
             if os.path.isfile(path):
-                ext = os.path.splitext(path)[1].lower()
-                if ext in COMPATIBLE_EXTS:
+                if os.path.splitext(path)[1].lower() in COMPATIBLE_EXTS:
                     supported_paths.append(path)
                 else:
                     unsupported_files.append(os.path.basename(path))
             elif os.path.isdir(path):
                 supported_paths.append(path)
-        
-        # Show warning for unsupported files
+
         if unsupported_files:
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.warning(self, 'Unsupported File Types', 
-                f'The following files have unsupported extensions:\n{", ".join(unsupported_files)}\n\n'
+            QMessageBox.warning(
+                self, 'Unsupported File Types',
+                f'The following files have unsupported extensions:\n'
+                f'{", ".join(unsupported_files)}\n\n'
                 f'Supported formats: {", ".join(sorted(COMPATIBLE_EXTS))}\n\n'
-                f'Only supported files and folders will be processed.')
-        
-        # Process supported files/folders
+                f'Only supported files and folders will be processed.'
+            )
+
         if supported_paths:
-            # Use the first path for the input field display
             main_path = supported_paths[0]
             self.input_path_edit.setText(main_path)
             self.auto_suggest_output_folder(main_path)
             self.status_bar.showMessage('Scanning for files...')
-            # Pass all supported paths to the scanner
             self.scan_for_files_auto(supported_paths)
 
     def init_ui(self):
-        # Create central widget for QMainWindow
+        """Layout the main window.
+
+        Structure:
+            QToolBar (actions: Add File, Add Folder, Fast Validation,
+                     chdman badge, Log toggle)
+            central widget:
+                QVBoxLayout:
+                    Input path strip  (QLineEdit, inline actions)
+                    Output path strip (QLineEdit, inline actions)
+                    QSplitter(horizontal):
+                        Left workspace: list header, file list (dominant),
+                                       collapsible info panel, progress,
+                                       morphing action button
+                        Right: optional log pane
+                    QStatusBar
+        """
+        self._build_toolbar()
+
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
-        layout = QVBoxLayout()
-        layout.setSpacing(16)
-        layout.setContentsMargins(16, 16, 16, 16)
-        # Input path
-        input_layout = QHBoxLayout()
-        self.input_path_edit = QLineEdit()
-        self.add_file_btn = QPushButton('Add File')
-        self.add_folder_btn = QPushButton('Add Folder')
-        for btn in (self.add_file_btn, self.add_folder_btn):
-            btn.setMinimumHeight(28)
-            btn.setMinimumWidth(110)
-        self.add_file_btn.clicked.connect(self.select_input_file)
-        self.add_folder_btn.clicked.connect(self.select_input_folder)
-        input_layout.addWidget(QLabel('Input:'))
-        input_layout.addWidget(self.input_path_edit)
-        input_layout.addWidget(self.add_file_btn)
-        input_layout.addWidget(self.add_folder_btn)
-        layout.addLayout(input_layout)
 
-        # Output path
-        output_layout = QHBoxLayout()
+        outer_layout = QVBoxLayout()
+        outer_layout.setSpacing(6)
+        outer_layout.setContentsMargins(12, 8, 12, 8)
+
+        style = self.style()
+
+        # ---- Path strips (compact, inline actions on the right) ----
+        outer_layout.addLayout(self._build_path_strip(
+            'Input',
+            self._make_input_edit(),
+            [],  # primary input actions live in the toolbar
+        ))
         self.output_path_edit = QLineEdit()
-        self.output_btn = QPushButton('Select Output Folder')
-        self.output_btn.setMinimumHeight(28)
-        self.output_btn.clicked.connect(self.select_output)
-        # Open Output Folder button
-        self.open_output_btn = QPushButton('Open Output Folder')
-        self.open_output_btn.setMinimumHeight(28)
-        self.open_output_btn.clicked.connect(self.open_output_folder)
-        output_layout.addWidget(QLabel('Output:'))
-        output_layout.addWidget(self.output_path_edit)
-        output_layout.addWidget(self.output_btn)
-        output_layout.addWidget(self.open_output_btn)
-        layout.addLayout(output_layout)
-
-        # chdman status indicator
-        chdman_layout = QHBoxLayout()
-        self.chdman_status_label = QLabel('chdman.exe:')
-        self.chdman_status_indicator = QLabel()
-        self.chdman_status_indicator.setStyleSheet("font-weight: bold;")
-        chdman_layout.addWidget(self.chdman_status_label)
-        chdman_layout.addWidget(self.chdman_status_indicator)
-        chdman_layout.addStretch()
-        layout.addLayout(chdman_layout)
-
-        # Conversion options
-        options_layout = QHBoxLayout()
-        self.fast_validation_cb = QCheckBox("Fast Validation Mode")
-        self.fast_validation_cb.setChecked(True)  # Default enabled
-        self.fast_validation_cb.setToolTip(
-            "Fast Mode (Default):\n"
-            "• ISO: Check file size only (2KB minimum)\n"
-            "• ZIP: Check header signature only\n"
-            "• CUE: Read 512 bytes instead of 1KB\n"
-            "• 5-10x faster for large files\n\n"
-            "Thorough Mode (Unchecked):\n"
-            "• ISO: Full 32KB header validation\n"
-            "• ZIP: Complete integrity test\n"
-            "• CUE: Full 1KB structure analysis\n"
-            "• Slower but more thorough validation\n\n"
-            "Note: Changing this setting will automatically rescan all files."
+        self.output_path_edit.setPlaceholderText(
+            'CHD output folder (auto-suggests [input]/CHD/)'
         )
-        self.fast_validation_cb.toggled.connect(self.on_validation_mode_changed)
-        options_layout.addWidget(self.fast_validation_cb)
-        options_layout.addStretch()
-        layout.addLayout(options_layout)
+        browse_action = QAction(
+            style.standardIcon(QStyle.SP_DialogOpenButton), 'Choose output folder',
+            self,
+        )
+        browse_action.triggered.connect(self.select_output)
+        open_action = QAction(
+            style.standardIcon(QStyle.SP_DirOpenIcon),
+            'Open output folder in file manager', self,
+        )
+        open_action.triggered.connect(self.open_output_folder)
+        self.output_path_edit.addAction(browse_action, QLineEdit.TrailingPosition)
+        self.output_path_edit.addAction(open_action, QLineEdit.TrailingPosition)
+        outer_layout.addLayout(self._build_path_strip(
+            'Output', self.output_path_edit, []
+        ))
 
-        # File list section with label and buttons on same line
-        file_list_header_layout = QHBoxLayout()
-        file_list_label = QLabel('Files to Convert:')
-        file_list_header_layout.addWidget(file_list_label)
-        file_list_header_layout.addStretch()  # Push buttons to the right
-        
-        # Create Select All/None buttons
-        self.select_all_btn = QPushButton('Select All')
-        self.select_all_btn.setMinimumHeight(28)
-        self.select_all_btn.clicked.connect(self.select_all_files)
-        self.select_none_btn = QPushButton('Select None')
-        self.select_none_btn.setMinimumHeight(28)
-        self.select_none_btn.clicked.connect(self.select_none_files)
-        
-        file_list_header_layout.addWidget(self.select_all_btn)
-        file_list_header_layout.addWidget(self.select_none_btn)
-        layout.addLayout(file_list_header_layout)
-        
-        # File list with checkboxes and sizes
-        self.file_list = QListWidget()
-        self.file_list.itemSelectionChanged.connect(self.on_file_selection_changed)
-        layout.addWidget(self.file_list)
-        
-        # File information panel
-        self.file_info_label = QLabel('File Information:')
-        self.file_info_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(self.file_info_label)
-        
-        self.file_info_text = QTextEdit()
-        self.file_info_text.setMaximumHeight(80)
-        self.file_info_text.setReadOnly(True)
-        self.file_info_text.setStyleSheet("QTextEdit { background-color: #f0f0f0; border: 1px solid #ccc; }")
-        layout.addWidget(self.file_info_text)
-        # Start/Stop buttons
-        button_layout = QHBoxLayout()
-        self.start_btn = QPushButton('Start Conversion')
-        self.start_btn.setMinimumHeight(28)
-        self.start_btn.clicked.connect(self.start_conversion)
-        self.start_btn.setEnabled(False)
-        self.stop_btn = QPushButton('Stop Conversion')
-        self.stop_btn.setMinimumHeight(28)
-        self.stop_btn.clicked.connect(self.stop_conversion)
-        self.stop_btn.setEnabled(False)
-        button_layout.addWidget(self.start_btn)
-        button_layout.addWidget(self.stop_btn)
-        layout.addLayout(button_layout)
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        layout.addWidget(self.progress_bar)
-        # Log area
-        self.log_area = QTextEdit()
-        self.log_area.setReadOnly(True)
-        layout.addWidget(QLabel('Log:'))
-        layout.addWidget(self.log_area)
-        # Status bar at bottom
+        # ---- Splitter: workspace on left, optional log on right ----
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.setHandleWidth(6)
+        outer_layout.addWidget(self.main_splitter, 1)
+
+        self.main_splitter.addWidget(self._build_workspace())
+        self.log_pane_widget = self._build_log_pane()
+        self.main_splitter.addWidget(self.log_pane_widget)
+
+        # Controls ~72%, log ~28% on first ever launch; versioned key so a
+        # previously saved state from an older layout does not restore.
+        self.main_splitter.setStretchFactor(0, 5)
+        self.main_splitter.setStretchFactor(1, 2)
+        saved_state = self.settings.value('splitter_state_v3')
+        if saved_state is not None:
+            self.main_splitter.restoreState(saved_state)
+        else:
+            self.main_splitter.setSizes([860, 320])
+        self.main_splitter.splitterMoved.connect(
+            lambda *_: self.settings.setValue(
+                'splitter_state_v3', self.main_splitter.saveState()
+            )
+        )
+
+        # Status bar spans the full width at the bottom.
         self.status_bar = QStatusBar()
         self.status_bar.showMessage('Ready to convert')
-        layout.addWidget(self.status_bar)
-        central_widget.setLayout(layout)
+        outer_layout.addWidget(self.status_bar)
+        central_widget.setLayout(outer_layout)
+
+    # -----------------------------------------------------------------
+    # init_ui helpers
+    # -----------------------------------------------------------------
+
+    def _make_input_edit(self):
+        self.input_path_edit = QLineEdit()
+        self.input_path_edit.setPlaceholderText(
+            'Drop files or folders here, or use Add File / Add Folder above'
+        )
+        return self.input_path_edit
+
+    def _build_path_strip(self, label_text, line_edit, trailing_actions):
+        """One row: label + QLineEdit (expanding). Trailing actions optional."""
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        label = QLabel(label_text)
+        label.setFixedWidth(68)  # comfortably fits "Output:" at default weight
+        label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        label.setStyleSheet('font-weight: 500;')
+        line_edit.setMinimumHeight(28)
+        line_edit.setClearButtonEnabled(True)
+        row.addWidget(label)
+        row.addWidget(line_edit, 1)
+        for action in trailing_actions:
+            line_edit.addAction(action, QLineEdit.TrailingPosition)
+        return row
+
+    def _build_toolbar(self):
+        """Top QToolBar: primary actions + chdman badge + log toggle."""
+        style = self.style()
+        self.toolbar = QToolBar('Main')
+        self.toolbar.setMovable(False)
+        self.toolbar.setFloatable(False)
+        self.toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.toolbar.setIconSize(QSize(16, 16))
+        self.toolbar.setObjectName('mainToolbar')
+        self.addToolBar(self.toolbar)
+
+        self.action_add_file = QAction(
+            style.standardIcon(QStyle.SP_FileIcon), 'Add File', self
+        )
+        self.action_add_file.setToolTip('Add a single disc image or archive')
+        self.action_add_file.triggered.connect(self.select_input_file)
+        self.toolbar.addAction(self.action_add_file)
+
+        self.action_add_folder = QAction(
+            style.standardIcon(QStyle.SP_DirIcon), 'Add Folder', self
+        )
+        self.action_add_folder.setToolTip('Scan a folder recursively for disc images')
+        self.action_add_folder.triggered.connect(self.select_input_folder)
+        self.toolbar.addAction(self.action_add_folder)
+
+        self.toolbar.addSeparator()
+
+        self.action_fast_validation = QAction('Fast Validation', self)
+        self.action_fast_validation.setCheckable(True)
+        self.action_fast_validation.setChecked(True)
+        self.action_fast_validation.setToolTip(
+            "Fast Mode (checked, default):\n"
+            "• ISO: Check file size only (2 KB minimum)\n"
+            "• ZIP: Check header signature only\n"
+            "• CUE: Read 512 bytes instead of 1 KB\n"
+            "• 5-10x faster on large files\n\n"
+            "Thorough Mode (unchecked):\n"
+            "• ISO: Full 32 KB header scan\n"
+            "• ZIP: Complete integrity test\n"
+            "• CUE: Full 1 KB structure analysis\n\n"
+            "Changing this setting triggers an automatic rescan."
+        )
+        self.action_fast_validation.toggled.connect(self.on_validation_mode_changed)
+        self.toolbar.addAction(self.action_fast_validation)
+
+        # Right-pinned items.
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.toolbar.addWidget(spacer)
+
+        self.chdman_status_indicator = QLabel()
+        self.chdman_status_indicator.setStyleSheet(
+            'padding: 0 10px; font-weight: 500;'
+        )
+        self.toolbar.addWidget(self.chdman_status_indicator)
+        # setup_menu_bar / update_widget_styles_for_theme reference this.
+        self.chdman_status_label = self.chdman_status_indicator
+
+        self.toolbar.addSeparator()
+
+        self.action_toggle_log = QAction(
+            style.standardIcon(QStyle.SP_FileDialogDetailedView), 'Log', self
+        )
+        self.action_toggle_log.setCheckable(True)
+        self.action_toggle_log.setChecked(
+            self.settings.value('log_pane_visible', True, type=bool)
+        )
+        self.action_toggle_log.setToolTip('Show or hide the log pane')
+        self.action_toggle_log.toggled.connect(self.toggle_log_pane)
+        self.toolbar.addAction(self.action_toggle_log)
+
+    def _build_workspace(self):
+        """Left column of the splitter: file list + info + action row."""
+        workspace = QWidget()
+        layout = QVBoxLayout(workspace)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # -- list header ---------------------------------------------
+        header_row = QHBoxLayout()
+        header_row.setSpacing(12)
+        self.list_summary_label = QLabel('No files added yet')
+        self.list_summary_label.setStyleSheet('font-weight: 600;')
+        header_row.addWidget(self.list_summary_label)
+        header_row.addStretch(1)
+
+        self.select_all_btn = QToolButton()
+        self.select_all_btn.setText('Select All')
+        self.select_all_btn.setObjectName('linkButton')
+        self.select_all_btn.setCursor(Qt.PointingHandCursor)
+        self.select_all_btn.clicked.connect(self.select_all_files)
+        self.select_none_btn = QToolButton()
+        self.select_none_btn.setText('Select None')
+        self.select_none_btn.setObjectName('linkButton')
+        self.select_none_btn.setCursor(Qt.PointingHandCursor)
+        self.select_none_btn.clicked.connect(self.select_none_files)
+        header_row.addWidget(self.select_all_btn)
+        header_row.addWidget(self.select_none_btn)
+        layout.addLayout(header_row)
+
+        # -- file list -----------------------------------------------
+        self.file_list = QListWidget()
+        self.file_list.setAlternatingRowColors(True)
+        self.file_list.setUniformItemSizes(True)
+        self.file_list.setMinimumHeight(260)
+        self.file_list.setItemDelegate(FileListDelegate(self.file_list))
+        self.file_list.setSelectionMode(QListWidget.SingleSelection)
+        self.file_list.setFocusPolicy(Qt.StrongFocus)
+        self.file_list.itemSelectionChanged.connect(self.on_file_selection_changed)
+        self.file_list.model().dataChanged.connect(self._on_file_item_data_changed)
+        layout.addWidget(self.file_list, 1)
+
+        # -- collapsible file info -----------------------------------
+        self.file_info_container = QWidget()
+        info_layout = QVBoxLayout(self.file_info_container)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(4)
+
+        self.file_info_header = QToolButton()
+        self.file_info_header.setText('File information')
+        self.file_info_header.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.file_info_header.setArrowType(Qt.DownArrow)
+        self.file_info_header.setAutoRaise(True)
+        self.file_info_header.setCursor(Qt.PointingHandCursor)
+        self.file_info_header.setStyleSheet(
+            'QToolButton { border: none; font-weight: 600; padding: 2px 0; }'
+        )
+        self.file_info_header.clicked.connect(self._toggle_file_info_collapse)
+        info_layout.addWidget(self.file_info_header)
+
+        self.file_info_text = QTextEdit()
+        self.file_info_text.setMinimumHeight(84)
+        self.file_info_text.setMaximumHeight(110)
+        self.file_info_text.setReadOnly(True)
+        self.file_info_text.setPlaceholderText('Select a file above to see details.')
+        self.file_info_text.setStyleSheet(
+            "QTextEdit { background-color: #f0f0f0; border: 1px solid #ccc; }"
+        )
+        info_layout.addWidget(self.file_info_text)
+
+        # Remember user's last collapsed/expanded preference, default open.
+        self._file_info_expanded = self.settings.value(
+            'file_info_expanded', True, type=bool
+        )
+        self.file_info_text.setVisible(self._file_info_expanded)
+        self.file_info_header.setArrowType(
+            Qt.DownArrow if self._file_info_expanded else Qt.RightArrow
+        )
+        self.file_info_container.setVisible(False)  # hidden until a row is picked
+        layout.addWidget(self.file_info_container)
+
+        # -- progress bar --------------------------------------------
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximumHeight(14)
+        self.progress_bar.setTextVisible(False)
+        layout.addWidget(self.progress_bar)
+
+        # -- morphing start/stop button -----------------------------
+        style = self.style()
+        self.action_stack = QStackedWidget()
+        self.action_stack.setFixedHeight(42)
+
+        self.start_btn = QPushButton('Start Conversion')
+        self.start_btn.setIcon(style.standardIcon(QStyle.SP_MediaPlay))
+        self.start_btn.setIconSize(QSize(16, 16))
+        self.start_btn.setObjectName('primaryButton')
+        self.start_btn.clicked.connect(self.start_conversion)
+        self.start_btn.setEnabled(False)
+
+        self.stop_btn = QPushButton('Stop Conversion')
+        self.stop_btn.setIcon(style.standardIcon(QStyle.SP_MediaStop))
+        self.stop_btn.setIconSize(QSize(16, 16))
+        self.stop_btn.setObjectName('dangerButton')
+        self.stop_btn.clicked.connect(self.stop_conversion)
+
+        self.action_stack.addWidget(self.start_btn)
+        self.action_stack.addWidget(self.stop_btn)
+        self.action_stack.setCurrentIndex(0)
+        layout.addWidget(self.action_stack)
+
+        return workspace
+
+    def _build_log_pane(self):
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setSpacing(6)
+        right_layout.setContentsMargins(4, 0, 0, 0)
+        log_label = QLabel('Log')
+        log_label.setStyleSheet('font-weight: 600;')
+        right_layout.addWidget(log_label)
+        self.log_area = QTextEdit()
+        self.log_area.setReadOnly(True)
+        right_layout.addWidget(self.log_area, 1)
+        # Honour the toolbar's saved log-toggle state on first paint.
+        right_widget.setVisible(
+            self.settings.value('log_pane_visible', True, type=bool)
+        )
+        return right_widget
+
+    def toggle_log_pane(self, visible):
+        self.log_pane_widget.setVisible(bool(visible))
+        self.settings.setValue('log_pane_visible', bool(visible))
+
+    def _toggle_file_info_collapse(self):
+        self._file_info_expanded = not self._file_info_expanded
+        self.file_info_text.setVisible(self._file_info_expanded)
+        self.file_info_header.setArrowType(
+            Qt.DownArrow if self._file_info_expanded else Qt.RightArrow
+        )
+        self.settings.setValue('file_info_expanded', self._file_info_expanded)
 
     def open_output_folder(self):
-        import os
-        import subprocess
         folder = self.output_path_edit.text().strip()
-        if folder and os.path.isdir(folder):
-            if os.name == 'nt':
-                os.startfile(folder)
-            elif os.name == 'posix':
-                subprocess.Popen(['xdg-open', folder])
+        if not folder or not os.path.isdir(folder):
+            return
+        if os.name == 'nt':
+            os.startfile(folder)
+        elif os.name == 'posix':
+            subprocess.Popen(['xdg-open', folder])
 
     def select_input_file(self):
         options = QFileDialog.Options()
-        file, _ = QFileDialog.getOpenFileName(self, 'Select File', '',
-            'Compatible Files (*.cue *.bin *.iso *.img *.zip *.nrg *.gdi *.toc *.ccd *.vcd *.chd *.cdr *.hdi *.vhd *.vmdk *.dsk)', options=options)
+        file, _ = QFileDialog.getOpenFileName(
+            self, 'Select File', '',
+            'Compatible Files (*.cue *.bin *.iso *.img *.gdi *.toc *.ccd '
+            '*.zip *.rar *.7z)',
+            options=options,
+        )
         if file:
             self.input_path_edit.setText(file)
             self.auto_suggest_output_folder(file)
@@ -1485,28 +841,21 @@ class CHDConverterGUI(QMainWindow):
             self.scan_for_files_auto(folder)
 
     def scan_for_files_auto(self, input_paths):
-        # Use ScanWorker (QThread) for safe background scanning
+        """Kick off a ScanWorker (QThread) for safe background scanning."""
         if isinstance(input_paths, str):
             input_paths = [input_paths]
-        
-        # Validate all paths
-        valid_paths = []
-        for path in input_paths:
-            if path and os.path.exists(path):
-                valid_paths.append(path)
-        
+
+        valid_paths = [p for p in input_paths if p and os.path.exists(p)]
         if not valid_paths:
             self.status_bar.showMessage('Invalid input path(s).')
             return
-            
-        # Initialize found_files if it doesn't exist (don't clear existing files)
+
         if not hasattr(self, 'found_files'):
             self.found_files = []
-        
+
         self.update_start_button_state()
         self.status_bar.showMessage('Scanning for files...')
-        # If a previous scan_worker exists, clean up
-        if hasattr(self, 'scan_worker') and self.scan_worker is not None:
+        if getattr(self, 'scan_worker', None) is not None:
             self.scan_worker.quit()
             self.scan_worker.wait()
         self.scan_worker = ScanWorker(valid_paths)
@@ -1516,126 +865,97 @@ class CHDConverterGUI(QMainWindow):
         self.scan_worker.start()
 
     def scan_completed(self, found_files):
-        # Append new files to existing list instead of replacing
+        """Merge newly-scanned files into the list, de-duplicating by base name."""
         if not hasattr(self, 'found_files'):
             self.found_files = []
-        
-        # Track new files and duplicates
+
+        # Multi-file disc formats where a "duplicate" base name is actually
+        # a required companion, not a replacement.
+        multi_file_formats = {
+            '.cue': ('.bin',),
+            '.toc': ('.bin',),
+            '.ccd': ('.img', '.sub'),
+        }
+        # Format priority when the same base name appears in two formats:
+        # pick the smaller number. Anything not listed drops to 999.
+        format_priority = {
+            '.iso': 1, '.cue': 2, '.bin': 3, '.img': 4,
+            '.zip': 5, '.nrg': 6, '.gdi': 7, '.toc': 8,
+            '.ccd': 9, '.vcd': 10,
+            '.cdr': 11, '.hdi': 12, '.vhd': 13, '.vmdk': 14, '.dsk': 15,
+        }
+
         new_files = []
         duplicate_files = []
-        
+
         for file_path in found_files:
-            if file_path not in self.found_files:
-                # Check for duplicates by name and size
-                file_name = os.path.basename(file_path)
-                try:
-                    file_size = os.path.getsize(file_path)
-                except (OSError, IOError):
-                    file_size = 0
-                
-                # Check for duplicates by base name (without extension)
-                # This handles cases like game.iso, game.zip, game.cue containing same content
-                file_base_name = os.path.splitext(file_name)[0]
-                file_ext = os.path.splitext(file_name)[1].lower()
-                is_duplicate = False
-                should_replace_existing = False
-                existing_file_to_remove = None
-                
-                # Define multi-file format relationships
-                multi_file_formats = {
-                    '.cue': ['.bin'],  # CUE files need BIN files
-                    '.toc': ['.bin'],  # TOC files need BIN files
-                    '.ccd': ['.img', '.sub']  # CCD files need IMG and SUB files
-                }
-                
-                for existing_file in self.found_files:
-                    try:
-                        existing_name = os.path.basename(existing_file)
-                        existing_base_name = os.path.splitext(existing_name)[0]
-                        existing_ext = os.path.splitext(existing_name)[1].lower()
-                        
-                        # Check if base names match (regardless of size)
-                        if existing_base_name == file_base_name:
-                            
-                            # Check if this is a multi-file format relationship
-                            is_multi_file_relationship = False
-                            
-                            # Check if existing file needs the new file
-                            if existing_ext in multi_file_formats:
-                                if file_ext in multi_file_formats[existing_ext]:
-                                    is_multi_file_relationship = True
-                            
-                            # Check if new file needs the existing file
-                            if file_ext in multi_file_formats:
-                                if existing_ext in multi_file_formats[file_ext]:
-                                    is_multi_file_relationship = True
-                            
-                            # If it's a multi-file relationship, don't treat as duplicate
-                            if is_multi_file_relationship:
-                                continue
-                            
-                            # Format priority: prefer ISO > CUE > BIN > IMG > ZIP > others
-                            format_priority = {
-                                '.iso': 1, '.cue': 2, '.bin': 3, '.img': 4, 
-                                '.zip': 5, '.nrg': 6, '.gdi': 7, '.toc': 8, 
-                                '.ccd': 9, '.vcd': 10, '.chd': 11,
-                                '.cdr': 12, '.hdi': 13, '.vhd': 14, '.vmdk': 15, '.dsk': 16
-                            }
-                            
-                            existing_priority = format_priority.get(existing_ext, 999)
-                            new_priority = format_priority.get(file_ext, 999)
-                            
-                            if new_priority < existing_priority:
-                                # New file has higher priority, replace existing
-                                should_replace_existing = True
-                                existing_file_to_remove = existing_file
-                                break
-                            else:
-                                # Existing file has higher or equal priority, skip new file
-                                duplicate_files.append(file_name)
-                                is_duplicate = True
-                                break
-                    except (OSError, IOError):
-                        # Skip files that can't be accessed
-                        continue
-                
-                # If we should replace an existing file, remove it first
-                if should_replace_existing and existing_file_to_remove:
-                    self.found_files.remove(existing_file_to_remove)
-                    # Remove from file list UI
-                    for i in range(self.file_list.count()):
-                        item = self.file_list.item(i)
-                        checkbox = self.file_list.itemWidget(item)
-                        if checkbox.toolTip().startswith(f"Path: {existing_file_to_remove}"):
-                            self.file_list.takeItem(i)
-                            break
-                
-                if not is_duplicate:
-                    self.found_files.append(file_path)
-                    new_files.append(file_path)
-        
-        # Show immediate feedback about new files
+            if file_path in self.found_files:
+                continue
+
+            file_name = os.path.basename(file_path)
+            file_base, file_ext = os.path.splitext(file_name)
+            file_ext = file_ext.lower()
+
+            is_duplicate = False
+            should_replace = None
+
+            for existing in self.found_files:
+                existing_name = os.path.basename(existing)
+                existing_base, existing_ext = os.path.splitext(existing_name)
+                existing_ext = existing_ext.lower()
+                if existing_base != file_base:
+                    continue
+
+                # Is the new file a companion the existing one needs?
+                is_companion = (
+                    (existing_ext in multi_file_formats and file_ext in multi_file_formats[existing_ext])
+                    or (file_ext in multi_file_formats and existing_ext in multi_file_formats[file_ext])
+                )
+                if is_companion:
+                    continue
+
+                new_priority = format_priority.get(file_ext, 999)
+                existing_priority = format_priority.get(existing_ext, 999)
+                if new_priority < existing_priority:
+                    should_replace = existing
+                    break
+                duplicate_files.append(file_name)
+                is_duplicate = True
+                break
+
+            if should_replace is not None:
+                self.found_files.remove(should_replace)
+                for i in range(self.file_list.count()):
+                    item = self.file_list.item(i)
+                    if item.data(ROLE_FILE_PATH) == should_replace:
+                        self.file_list.takeItem(i)
+                        break
+
+            if not is_duplicate:
+                self.found_files.append(file_path)
+                new_files.append(file_path)
+
         if new_files:
-            # Initialize file_info_cache if it doesn't exist
             if not hasattr(self, 'file_info_cache'):
                 self.file_info_cache = {}
-            
-            # Add new files to the list immediately
             for file_path in new_files:
                 self.add_file_to_list(file_path)
-            
-            # Start validation for new files
             self.start_background_validation()
-            
-            status_msg = f'Scan complete: {len(new_files)} new file(s) found. Total: {len(self.found_files)} file(s). Ready to convert!'
+            status_msg = (
+                f'Scan complete: {len(new_files)} new file(s) found. '
+                f'Total: {len(self.found_files)} file(s). Ready to convert!'
+            )
             if duplicate_files:
                 status_msg += f' Skipped {len(duplicate_files)} duplicate(s).'
             self.status_bar.showMessage(status_msg)
         elif duplicate_files:
-            self.status_bar.showMessage(f'Scan complete: All files were duplicates. Skipped {len(duplicate_files)} file(s).')
+            self.status_bar.showMessage(
+                f'Scan complete: All files were duplicates. '
+                f'Skipped {len(duplicate_files)} file(s).'
+            )
         else:
             self.status_bar.showMessage('Scan complete: No new files found.')
-        
+
         self.update_start_button_state()
 
     def scan_error(self, error_msg):
@@ -1643,21 +963,11 @@ class CHDConverterGUI(QMainWindow):
         self.update_start_button_state()
 
     def auto_suggest_output_folder(self, input_path):
-        """Auto-suggest output folder as [input_path]/CHD/ without creating it"""
-        if os.path.isfile(input_path):
-            # If input is a file, use its directory
-            input_dir = os.path.dirname(input_path)
-        else:
-            # If input is a folder, use it directly
-            input_dir = input_path
-        
-        # Create CHD subfolder path
+        """Auto-suggest output folder as [input_path]/CHD/ without creating it."""
+        input_dir = os.path.dirname(input_path) if os.path.isfile(input_path) else input_path
         chd_folder = os.path.join(input_dir, 'CHD')
-        
-        # Set the output path (don't create folder yet)
         self.output_path_edit.setText(chd_folder)
         self.log_area.append(f'Suggested output folder: {chd_folder}')
-        # Update start button state since output path changed
         self.update_start_button_state()
 
     def select_output(self):
@@ -1665,335 +975,307 @@ class CHDConverterGUI(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, 'Select Output Folder', '', options=options)
         if folder:
             self.output_path_edit.setText(folder)
-            # Clear the auto-suggestion log since user manually selected
             self.log_area.append(f'Manually selected output folder: {folder}')
-            # Update start button state since output path changed
             self.update_start_button_state()
 
-
-    
     def populate_file_list(self):
-        """Populate file list with basic info first, then validate in background"""
-        # Initialize file_info_cache if it doesn't exist
+        """Rebuild the file list UI from self.found_files, preserving cached validation."""
         if not hasattr(self, 'file_info_cache'):
             self.file_info_cache = {}
-        
-        # Clear the list but preserve validation cache for existing files
         existing_cache = self.file_info_cache
         self.file_list.clear()
-        
-        # Keep existing validation results for files that are still in the list
+        # Drop cache entries for files that are no longer in the list.
         self.file_info_cache = {k: v for k, v in existing_cache.items() if k in self.found_files}
-        
-        # First pass: Show files with basic info (fast)
+
         for file_path in self.found_files:
             self.add_file_to_list(file_path)
-        
-        # Update status bar with basic info
-        if len(self.found_files) > 0:
-            validated_count = len([f for f in self.found_files if f in self.file_info_cache])
-            if validated_count == len(self.found_files):
-                status_msg = f"Files: {len(self.found_files)} | All files validated. Ready to convert!"
-            else:
-                status_msg = f"Files: {len(self.found_files)} | Validating files in background... (You can start conversion anytime)"
-            self.status_bar.showMessage(status_msg)
-        
-        # Start background validation for new files only
+
+        self._update_list_summary()
         self.start_background_validation()
-    
+
     def add_file_to_list(self, file_path):
-        """Add a single file to the list with appropriate display"""
-        try:
-            item = QListWidgetItem()
-            
-            # Check if we already have validation info for this file
-            if hasattr(self, 'file_info_cache') and file_path in self.file_info_cache:
-                file_info = self.file_info_cache[file_path]
-                # Use existing validation result
-                if file_info['is_valid']:
-                    status_icon = "✓"
-                    display_text = f"{status_icon} {file_info['name']} ({file_info['size_str']})"
-                    checkbox = QCheckBox(display_text)
-                    checkbox.setStyleSheet("QCheckBox { color: green; }")
-                else:
-                    status_icon = "✗"
-                    display_text = f"{status_icon} {file_info['name']} ({file_info['size_str']}) - {file_info['validation_msg']}"
-                    checkbox = QCheckBox(display_text)
-                    checkbox.setStyleSheet("QCheckBox { color: red; }")
-                
-                # Update tooltip with detailed information
-                tooltip_text = f"Path: {file_info['path']}\n"
-                tooltip_text += f"Size: {file_info['size_str']}\n"
-                tooltip_text += f"Format: {file_info['extension']}\n"
-                tooltip_text += f"Status: {file_info['validation_msg']}"
-                checkbox.setToolTip(tooltip_text)
-            else:
-                # New file - show with loading indicator
-                try:
-                    file_size = os.path.getsize(file_path)
-                    if file_size >= 1024**3:
-                        size_str = f"{file_size / (1024**3):.2f} GB"
-                    elif file_size >= 1024**2:
-                        size_str = f"{file_size / (1024**2):.2f} MB"
-                    elif file_size >= 1024:
-                        size_str = f"{file_size / 1024:.2f} KB"
-                    else:
-                        size_str = f"{file_size} bytes"
-                except (OSError, IOError):
-                    size_str = "Unknown size"
-                
-                display_text = f"⏳ {os.path.basename(file_path)} ({size_str})"
-                checkbox = QCheckBox(display_text)
-                checkbox.setToolTip(f"Path: {file_path}\nSize: {size_str}\nValidating...")
-                checkbox.setStyleSheet("QCheckBox { color: gray; }")
-            
-            checkbox.setChecked(True)
-            self.file_list.addItem(item)
-            self.file_list.setItemWidget(item, checkbox)
-        except Exception as e:
-            # If there's any error adding the file to the list, log it but don't crash
-            print(f"Error adding file {file_path} to list: {e}")
-            # Add a basic entry to prevent crashes
-            item = QListWidgetItem()
-            checkbox = QCheckBox(f"Error: {os.path.basename(file_path)}")
-            checkbox.setStyleSheet("QCheckBox { color: red; }")
-            checkbox.setChecked(False)
-            self.file_list.addItem(item)
-            self.file_list.setItemWidget(item, checkbox)
-    
+        """Create a QListWidgetItem carrying file path + (optionally cached) info."""
+        item = QListWidgetItem()
+        item.setFlags(
+            Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable
+        )
+        item.setCheckState(Qt.Checked)
+        item.setData(ROLE_FILE_PATH, file_path)
+
+        cached = getattr(self, 'file_info_cache', {}).get(file_path)
+        if cached is not None:
+            item.setData(ROLE_FILE_INFO, cached)
+        else:
+            try:
+                file_size = os.path.getsize(file_path)
+                size_str = temp_manager.format_size(file_size)
+            except OSError:
+                file_size = 0
+                size_str = 'Unknown'
+            # Seed pending info so the delegate can render something sensible
+            # while validation runs in the background.
+            item.setData(ROLE_FILE_INFO, {
+                'name': os.path.basename(file_path),
+                'path': file_path,
+                'size': file_size,
+                'size_str': size_str,
+                'extension': os.path.splitext(file_path)[1].lower(),
+                # 'is_valid' deliberately omitted so the delegate paints
+                # a pending/... status indicator.
+                'validation_msg': 'Validating...',
+            })
+        item.setToolTip(file_path)
+        self.file_list.addItem(item)
+
     def start_background_validation(self):
-        """Start background validation of files"""
-        if hasattr(self, 'validation_worker') and self.validation_worker is not None:
+        """Run a ValidationWorker across files not already validated."""
+        if getattr(self, 'validation_worker', None) is not None:
             self.validation_worker.quit()
             self.validation_worker.wait()
-        
-        # Initialize file_info_cache if it doesn't exist
+
         if not hasattr(self, 'file_info_cache'):
             self.file_info_cache = {}
-        
-        # Only validate files that haven't been validated yet
-        unvalidated_files = []
-        for file_path in self.found_files:
-            if file_path not in self.file_info_cache:
-                unvalidated_files.append(file_path)
-        
-        if not unvalidated_files:
-            # All files already validated, just update the final summary
+
+        unvalidated = [p for p in self.found_files if p not in self.file_info_cache]
+        if not unvalidated:
             self.update_file_validation({})
             return
-        
-        # Determine optimal number of workers based on file count and system capabilities
-        import os
+
+        # Cap workers to something sensible for the file count and CPU.
         cpu_count = os.cpu_count() or 4
-        file_count = len(unvalidated_files)
-        
-        # Use fewer workers for small file counts, more for larger counts
-        # But cap at CPU count to avoid overwhelming the system
-        if file_count <= 4:
+        count = len(unvalidated)
+        if count <= 4:
             max_workers = min(2, cpu_count)
-        elif file_count <= 10:
+        elif count <= 10:
             max_workers = min(4, cpu_count)
         else:
             max_workers = min(6, cpu_count)
-        
-        # Get the current fast validation setting
-        fast_validation = self.fast_validation_cb.isChecked()
-        self.validation_worker = ValidationWorker(unvalidated_files, max_workers=max_workers, fast_validation=fast_validation)
+
+        fast_validation = self.action_fast_validation.isChecked()
+        self.validation_worker = ValidationWorker(
+            unvalidated, max_workers=max_workers, fast_validation=fast_validation,
+        )
         self.validation_worker.validation_progress.connect(self.update_single_file_validation)
         self.validation_worker.validation_complete.connect(self.update_file_validation)
         self.validation_worker.start()
-    
+
     def update_single_file_validation(self, file_path, file_info):
-        """Update a single file's validation status as it completes"""
-        # Find the file in the list
+        """Update a single file's row as its validation result arrives."""
         try:
             file_index = self.found_files.index(file_path)
-            if file_index < self.file_list.count():
-                item = self.file_list.item(file_index)
-                checkbox = self.file_list.itemWidget(item)
-                
-                # Update display text with validation status
-                if file_info['is_valid']:
-                    status_icon = "✓"
-                    checkbox.setStyleSheet("QCheckBox { color: green; }")
-                else:
-                    status_icon = "✗"
-                    checkbox.setStyleSheet("QCheckBox { color: red; }")
-                
-                # Format display text
-                display_text = f"{status_icon} {file_info['name']} ({file_info['size_str']})"
-                if not file_info['is_valid']:
-                    display_text += f" - {file_info['validation_msg']}"
-                
-                checkbox.setText(display_text)
-                
-                # Update tooltip with detailed information
-                tooltip_text = f"Path: {file_info['path']}\n"
-                tooltip_text += f"Size: {file_info['size_str']}\n"
-                tooltip_text += f"Format: {file_info['extension']}\n"
-                tooltip_text += f"Status: {file_info['validation_msg']}"
-                checkbox.setToolTip(tooltip_text)
-                
-                # Store in cache
-                if not hasattr(self, 'file_info_cache'):
-                    self.file_info_cache = {}
-                self.file_info_cache[file_path] = file_info
-                
-                # Update status bar with progress
-                validated_count = len(self.file_info_cache)
-                total_count = len(self.found_files)
-                status_msg = f"Validating files... ({validated_count}/{total_count} completed)"
-                self.status_bar.showMessage(status_msg)
         except ValueError:
-            # File not found in list (shouldn't happen, but safety check)
-            pass
+            return
+        if file_index >= self.file_list.count():
+            return
+
+        item = self.file_list.item(file_index)
+        item.setData(ROLE_FILE_INFO, file_info)
+        item.setToolTip(
+            f"{file_info['path']}\n"
+            f"{file_info['size_str']}  ({file_info['extension']})\n"
+            f"{file_info['validation_msg']}"
+        )
+        # Ensure the delegate repaints this row now that its data changed.
+        self.file_list.update(self.file_list.indexFromItem(item))
+
+        if not hasattr(self, 'file_info_cache'):
+            self.file_info_cache = {}
+        self.file_info_cache[file_path] = file_info
+
+        validated_count = len(self.file_info_cache)
+        total_count = len(self.found_files)
+        self.status_bar.showMessage(
+            f"Validating files... ({validated_count}/{total_count} completed)"
+        )
+        self._update_list_summary()
 
     def update_file_validation(self, validation_results):
-        """Update file list with validation results (final summary)"""
-        # Calculate final statistics from cached results
-        total_size = 0
-        valid_files = 0
-        invalid_files = 0
-        
-        for file_info in self.file_info_cache.values():
-            if file_info['is_valid']:
-                valid_files += 1
-                total_size += file_info['size']
+        """Final summary once all ValidationWorker results are in."""
+        if validation_results:
+            self.file_info_cache.update(validation_results)
+
+        total_size = sum(
+            info['size'] for info in self.file_info_cache.values() if info['is_valid']
+        )
+        valid_files = sum(1 for info in self.file_info_cache.values() if info['is_valid'])
+        invalid_files = sum(1 for info in self.file_info_cache.values() if not info['is_valid'])
+
+        if self.found_files:
+            total_size_str = temp_manager.format_size(total_size)
+            self.status_bar.showMessage(
+                f"Files: {len(self.found_files)} | Valid: {valid_files} | "
+                f"Invalid: {invalid_files} | Total Size: {total_size_str}"
+            )
+        self._update_list_summary()
+
+        # If the user triggered this run by flipping validation mode, close
+        # the loop in the log so the "Re-validating..." line isn't orphaned.
+        mode = getattr(self, '_revalidation_mode_text', None)
+        if mode:
+            self._revalidation_mode_text = None
+            if invalid_files:
+                self.log_area_append(
+                    f"Re-validation complete ({mode} mode): "
+                    f"{valid_files} valid, {invalid_files} invalid."
+                )
             else:
-                invalid_files += 1
-        
-        # Update status bar with final summary
-        if len(self.found_files) > 0:
-            total_size_str = ""
-            if total_size >= 1024**3:
-                total_size_str = f"{total_size / (1024**3):.2f} GB"
-            elif total_size >= 1024**2:
-                total_size_str = f"{total_size / (1024**2):.2f} MB"
-            elif total_size >= 1024:
-                total_size_str = f"{total_size / 1024:.2f} KB"
-            else:
-                total_size_str = f"{total_size} bytes"
-            
-            status_msg = f"Files: {len(self.found_files)} | Valid: {valid_files} | Invalid: {invalid_files} | Total Size: {total_size_str}"
-            self.status_bar.showMessage(status_msg)
-        
-        # Store validation results for later use (already done in update_single_file_validation)
-        self.file_info_cache = validation_results
-    
+                self.log_area_append(
+                    f"Re-validation complete ({mode} mode): all {valid_files} file(s) valid."
+                )
+
     def on_file_selection_changed(self):
-        """Update file information panel when selection changes"""
+        """Show details for the selected file in the information panel."""
         selected_items = self.file_list.selectedItems()
         if not selected_items:
             self.file_info_text.clear()
+            self.file_info_container.setVisible(False)
             return
-        
-        # Get the first selected item
+
         item = selected_items[0]
         item_index = self.file_list.row(item)
-        
-        if item_index < len(self.found_files):
-            file_path = self.found_files[item_index]
-            
-            # Use cached validation results if available
-            if hasattr(self, 'file_info_cache') and file_path in self.file_info_cache:
-                file_info = self.file_info_cache[file_path]
-            else:
-                # Fallback to direct validation if cache not available
-                file_info = get_file_info(file_path)
-            
-            # Create detailed information text
-            info_text = f"File: {file_info['name']}\n"
-            info_text += f"Path: {file_info['path']}\n"
-            info_text += f"Size: {file_info['size_str']}\n"
-            info_text += f"Format: {file_info['extension']}\n"
-            info_text += f"Status: {file_info['validation_msg']}"
-            
-            # Color code the text based on validation status and current theme
-            if self.current_theme == 'dark':
-                if file_info['is_valid']:
-                    self.file_info_text.setStyleSheet("QTextEdit { background-color: #1b5e20; border: 1px solid #4caf50; color: #e0e0e0; }")
-                else:
-                    self.file_info_text.setStyleSheet("QTextEdit { background-color: #b71c1c; border: 1px solid #f44336; color: #e0e0e0; }")
-            else:
-                if file_info['is_valid']:
-                    self.file_info_text.setStyleSheet("QTextEdit { background-color: #e8f5e8; border: 1px solid #4caf50; color: #333333; }")
-                else:
-                    self.file_info_text.setStyleSheet("QTextEdit { background-color: #ffe8e8; border: 1px solid #f44336; color: #333333; }")
-            
-            self.file_info_text.setText(info_text)
+        if item_index >= len(self.found_files):
+            return
+
+        file_path = self.found_files[item_index]
+        cached = getattr(self, 'file_info_cache', {}).get(file_path)
+        file_info = cached if cached is not None else get_file_info(file_path)
+
+        info_text = (
+            f"File: {file_info['name']}\n"
+            f"Path: {file_info['path']}\n"
+            f"Size: {file_info['size_str']}\n"
+            f"Format: {file_info['extension']}\n"
+            f"Status: {file_info['validation_msg']}"
+        )
+
+        # Subtle left-border accent; avoid the heavy filled background that
+        # earlier versions used.
+        if self.current_theme == 'dark':
+            ok = ("QTextEdit { background-color: #2d2d2d;"
+                  " border: 1px solid #3a3a3a; border-left: 3px solid #4caf50;"
+                  " color: #e0e0e0; padding: 4px; }")
+            bad = ("QTextEdit { background-color: #2d2d2d;"
+                   " border: 1px solid #3a3a3a; border-left: 3px solid #f44336;"
+                   " color: #e0e0e0; padding: 4px; }")
+        else:
+            ok = ("QTextEdit { background-color: #fafafa;"
+                  " border: 1px solid #d0d0d0; border-left: 3px solid #4caf50;"
+                  " color: #333333; padding: 4px; }")
+            bad = ("QTextEdit { background-color: #fafafa;"
+                   " border: 1px solid #d0d0d0; border-left: 3px solid #f44336;"
+                   " color: #333333; padding: 4px; }")
+        self.file_info_text.setStyleSheet(ok if file_info['is_valid'] else bad)
+        self.file_info_text.setText(info_text)
+        self.file_info_container.setVisible(True)
+        # Respect collapsed preference even on reveal.
+        self.file_info_text.setVisible(self._file_info_expanded)
 
     def select_all_files(self):
         for i in range(self.file_list.count()):
-            item = self.file_list.item(i)
-            checkbox = self.file_list.itemWidget(item)
-            checkbox.setChecked(True)
+            self.file_list.item(i).setCheckState(Qt.Checked)
 
     def select_none_files(self):
         for i in range(self.file_list.count()):
-            item = self.file_list.item(i)
-            checkbox = self.file_list.itemWidget(item)
-            checkbox.setChecked(False)
+            self.file_list.item(i).setCheckState(Qt.Unchecked)
 
     def get_selected_files(self):
+        """Return the checked files plus warnings about invalid/unvalidated ones."""
         selected_files = []
         invalid_selected = []
         unvalidated_selected = []
-        
+
         for i in range(self.file_list.count()):
             item = self.file_list.item(i)
-            checkbox = self.file_list.itemWidget(item)
-            if checkbox.isChecked():
-                file_path = self.found_files[i]
-                
-                # Check if validation is complete for this file
-                if hasattr(self, 'file_info_cache') and file_path in self.file_info_cache:
-                    file_info = self.file_info_cache[file_path]
-                    if file_info['is_valid']:
-                        selected_files.append(file_path)
-                    else:
-                        invalid_selected.append(file_info['name'])
-                else:
-                    # File hasn't been validated yet - include it but warn user
+            if item.checkState() != Qt.Checked:
+                continue
+            file_path = self.found_files[i]
+            cached = getattr(self, 'file_info_cache', {}).get(file_path)
+            if cached is not None:
+                if cached['is_valid']:
                     selected_files.append(file_path)
-                    unvalidated_selected.append(os.path.basename(file_path))
-        
-        # Warn about unvalidated files
+                else:
+                    invalid_selected.append(cached['name'])
+            else:
+                selected_files.append(file_path)
+                unvalidated_selected.append(os.path.basename(file_path))
+
         if unvalidated_selected:
-            warning_msg = f"Note: {len(unvalidated_selected)} file(s) haven't been validated yet and will be converted anyway: {', '.join(unvalidated_selected)}"
-            self.log_area.append(warning_msg)
-        
-        # Warn about invalid files that were selected
+            self.log_area.append(
+                f"Note: {len(unvalidated_selected)} file(s) haven't been validated yet "
+                f"and will be converted anyway: {', '.join(unvalidated_selected)}"
+            )
         if invalid_selected:
-            warning_msg = f"Warning: {len(invalid_selected)} invalid file(s) were selected and will be skipped: {', '.join(invalid_selected)}"
-            self.log_area.append(warning_msg)
-        
+            self.log_area.append(
+                f"Warning: {len(invalid_selected)} invalid file(s) were selected "
+                f"and will be skipped: {', '.join(invalid_selected)}"
+            )
+
         return selected_files
+
+    def _on_file_item_data_changed(self, *_):
+        """Keep the list-summary header and Start button state in sync with checks."""
+        self._update_list_summary()
+        self.update_start_button_state()
+
+    def _update_list_summary(self):
+        """Render the live summary label above the file list."""
+        if not hasattr(self, 'list_summary_label'):
+            return
+        if not self.found_files:
+            self.list_summary_label.setText('No files added yet')
+            return
+
+        cache = getattr(self, 'file_info_cache', {})
+        total = len(self.found_files)
+        checked = sum(
+            1 for i in range(self.file_list.count())
+            if self.file_list.item(i).checkState() == Qt.Checked
+        )
+        size_bytes = sum(
+            info.get('size', 0) for info in cache.values() if info.get('is_valid')
+        )
+        size_str = temp_manager.format_size(size_bytes) if size_bytes else '--'
+
+        valid = sum(1 for info in cache.values() if info.get('is_valid'))
+        invalid = sum(
+            1 for info in cache.values() if 'is_valid' in info and not info['is_valid']
+        )
+        if invalid:
+            status = f'{valid} valid, {invalid} invalid'
+        elif valid == total:
+            status = 'All valid'
+        else:
+            status = f'{valid}/{total} validated'
+
+        self.list_summary_label.setText(
+            f'{checked}/{total} selected  ·  {size_str}  ·  {status}'
+        )
 
     def start_conversion(self):
         selected_files = self.get_selected_files()
         if not selected_files:
             self.log_area.append('No files selected for conversion.')
             return
-            
+
         output_path = self.output_path_edit.text().strip()
-        
         if not output_path:
             self.log_area.append('Please select an output folder.')
             return
-        if not hasattr(self, 'chdman_path') or not self.chdman_path or not os.path.isfile(self.chdman_path):
-            self.log_area.append('chdman.exe not found. Please place chdman.exe in the same folder as XtoCHD.')
+        if not self.chdman_path or not os.path.isfile(self.chdman_path):
+            self.log_area.append(
+                'chdman.exe not found. Please place chdman.exe in the same folder as XtoCHD.'
+            )
             return
 
-        # Check temp directory before starting conversion
         self.check_temp_directory_before_conversion()
-
-        # Disable all UI elements during conversion
         self.disable_ui_during_conversion()
         self.progress_bar.setMaximum(100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        # Morph the single action button into its "Stop" state.
+        self.action_stack.setCurrentIndex(1)
         self.status_bar.showMessage('Starting conversion...')
-        
-        # Start conversion in separate thread
+
         self.conversion_worker = ConversionWorker(selected_files, output_path, self.chdman_path)
         self.conversion_worker.progress_updated.connect(self.progress_bar.setValue)
         self.conversion_worker.progress_text.connect(self.status_bar.showMessage)
@@ -2001,52 +1283,56 @@ class CHDConverterGUI(QMainWindow):
         self.conversion_worker.conversion_finished.connect(self.conversion_completed)
         self.conversion_worker.start()
 
+    def _set_toolbar_actions_enabled(self, enabled):
+        for action in (
+            getattr(self, 'action_add_file', None),
+            getattr(self, 'action_add_folder', None),
+            getattr(self, 'action_fast_validation', None),
+        ):
+            if action is not None:
+                action.setEnabled(enabled)
+
     def disable_ui_during_conversion(self):
-        """Disable all UI elements except stop button during conversion"""
-        self.add_file_btn.setEnabled(False)
-        self.add_folder_btn.setEnabled(False)
-        self.output_btn.setEnabled(False)
-        self.select_all_btn.setEnabled(False)
-        self.select_none_btn.setEnabled(False)
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        self.file_list.setEnabled(False)
-        self.fast_validation_cb.setEnabled(False)
+        self._set_toolbar_actions_enabled(False)
+        for widget in (
+            self.select_all_btn, self.select_none_btn,
+            self.file_list, self.input_path_edit, self.output_path_edit,
+        ):
+            widget.setEnabled(False)
 
     def enable_ui_after_conversion(self):
-        """Re-enable all UI elements after conversion"""
-        self.add_file_btn.setEnabled(True)
-        self.add_folder_btn.setEnabled(True)
-        self.output_btn.setEnabled(True)
-        self.select_all_btn.setEnabled(True)
-        self.select_none_btn.setEnabled(True)
+        self._set_toolbar_actions_enabled(True)
+        for widget in (
+            self.select_all_btn, self.select_none_btn,
+            self.file_list, self.input_path_edit, self.output_path_edit,
+        ):
+            widget.setEnabled(True)
         self.update_start_button_state()
-        self.stop_btn.setEnabled(False)
-        self.file_list.setEnabled(True)
-        self.fast_validation_cb.setEnabled(True)
 
     def stop_conversion(self):
-        """Stop the current conversion process"""
+        """Stop the current conversion process."""
         if self.conversion_worker and self.conversion_worker.isRunning():
             self.conversion_worker.cancel()
             self.status_bar.showMessage('Stopping conversion...')
 
     def conversion_completed(self):
         self.enable_ui_after_conversion()
-        
-        # Clean up temp dirs from conversion worker
+
         if self.conversion_worker:
             self.conversion_worker.cleanup_temp_dirs()
         self.cleanup_temp_dirs()
-        
-        # Update status based on completion
+
+        self.progress_bar.setTextVisible(False)
+        # Morph back to the "Start" state.
+        self.action_stack.setCurrentIndex(0)
+
         if self.conversion_worker and self.conversion_worker.cancelled:
             self.status_bar.showMessage('Conversion stopped')
         else:
             self.status_bar.showMessage('Conversion completed')
 
     def cleanup_temp_dirs(self):
-        """Clean up temporary directories created during scanning and conversion"""
+        """Clean up temp directories owned by the GUI (not the worker)."""
         cleaned_count = 0
         for d in self.temp_dirs:
             if temp_manager.cleanup_temp_dir(d):
@@ -2056,93 +1342,115 @@ class CHDConverterGUI(QMainWindow):
             self.log_area.append(f'Cleaned up {cleaned_count} temporary directories.')
 
     def on_validation_mode_changed(self):
-        """Handle validation mode toggle - trigger rescan"""
-        if hasattr(self, 'found_files') and self.found_files:
-            # Show prominent notification in log area
-            mode_text = "Fast" if self.fast_validation_cb.isChecked() else "Thorough"
-            self.log_area_append(f"🔄 Validation mode changed to {mode_text} mode. Rescanning files...")
-            self.status_bar.showMessage(f'Validation mode changed to {mode_text} mode. Rescanning files...')
-            self.scan_for_files_auto(self.input_path_edit.text().strip())
-    
+        """Re-validate all files when the user flips fast vs thorough."""
+        if not getattr(self, 'found_files', None):
+            return
+        mode_text = "Fast" if self.action_fast_validation.isChecked() else "Thorough"
+        count = len(self.found_files)
+        self.log_area_append(
+            f"Validation mode changed to {mode_text}. Re-validating {count} file(s)..."
+        )
+        self.status_bar.showMessage(
+            f'Re-validating {count} file(s) in {mode_text} mode...'
+        )
+
+        # Clear the validation cache so every file goes through the new
+        # validator again; without this, cached results from the previous
+        # mode stick around and nothing actually changes.
+        self.file_info_cache = {}
+
+        # Reset every row's display state back to "pending" so the
+        # delegate paints the grey "validating..." hint while the worker
+        # is in flight.
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            info = dict(item.data(ROLE_FILE_INFO) or {})
+            info.pop('is_valid', None)
+            info['validation_msg'] = 'Validating...'
+            item.setData(ROLE_FILE_INFO, info)
+            self.file_list.update(self.file_list.indexFromItem(item))
+
+        # Remember to announce completion; update_file_validation will
+        # check this flag and log a closing line once the worker is done.
+        self._revalidation_mode_text = mode_text
+        self.start_background_validation()
+
     def perform_startup_cleanup(self):
-        """Perform cleanup of orphaned temp files on startup"""
+        """On launch, sweep orphaned temp dirs and report current sizes."""
         try:
-            # Clean up orphaned temp directories
             cleaned_count = temp_manager.cleanup_orphaned_temp_dirs()
-            
-            # Get current temp directory size
             temp_size = temp_manager.get_temp_dir_size()
-            
             if cleaned_count > 0:
-                self.log_area.append(f'🧹 Startup cleanup: Removed {cleaned_count} orphaned temporary directories.')
-            
+                self.log_area.append(
+                    f'Startup cleanup: removed {cleaned_count} orphaned temp directories.'
+                )
             if temp_size > 0:
-                size_str = temp_manager.format_size(temp_size)
-                self.log_area.append(f'📁 Temp directory size: {size_str}')
-            
-            # Log temp directory location
-            self.log_area.append(f'📂 Temp directory: {temp_manager.temp_base_dir}')
-            
-        except Exception as e:
-            self.log_area.append(f'⚠️ Warning: Could not perform startup cleanup: {e}')
-    
+                self.log_area.append(f'Temp directory size: {temp_manager.format_size(temp_size)}')
+            self.log_area.append(f'Temp directory: {temp_manager.temp_base_dir}')
+        except OSError as e:
+            self.log_area.append(f'Warning: could not perform startup cleanup: {e}')
+
     def get_temp_directory_info(self):
-        """Get information about the temp directory"""
         try:
             temp_size = temp_manager.get_temp_dir_size()
-            size_str = temp_manager.format_size(temp_size)
-            return f"Temp directory: {temp_manager.temp_base_dir}\nSize: {size_str}"
-        except Exception as e:
-            return f"Temp directory: {temp_manager.temp_base_dir}\nSize: Unknown (error: {e})"
-    
+            return (
+                f"Temp directory: {temp_manager.temp_base_dir}\n"
+                f"Size: {temp_manager.format_size(temp_size)}"
+            )
+        except OSError as e:
+            return (
+                f"Temp directory: {temp_manager.temp_base_dir}\n"
+                f"Size: Unknown (error: {e})"
+            )
+
     def check_temp_directory_before_conversion(self):
-        """Check temp directory status before starting conversion"""
         try:
             temp_size = temp_manager.get_temp_dir_size()
-            size_mb = temp_size / (1024 * 1024)
-            
-            if size_mb > 100:  # Warn if temp directory is larger than 100MB
-                size_str = temp_manager.format_size(temp_size)
-                self.log_area.append(f'⚠️ Warning: Temp directory is {size_str}. Consider cleaning up.')
-            
-            # Log current temp directory status
             size_str = temp_manager.format_size(temp_size)
-            self.log_area.append(f'📁 Temp directory status: {size_str}')
-            
-        except Exception as e:
-            self.log_area.append(f'⚠️ Warning: Could not check temp directory: {e}')
-    
+            if temp_size > 100 * 1024 * 1024:
+                self.log_area.append(
+                    f'Warning: temp directory is {size_str}. Consider cleaning up.'
+                )
+            self.log_area.append(f'Temp directory status: {size_str}')
+        except OSError as e:
+            self.log_area.append(f'Warning: could not check temp directory: {e}')
+
     def show_temp_directory_info(self):
-        """Show information about the temp directory"""
-        from PyQt5.QtWidgets import QMessageBox
-        
-        info = self.get_temp_directory_info()
-        QMessageBox.information(self, 'Temp Directory Info', info)
-    
+        QMessageBox.information(self, 'Temp Directory Info', self.get_temp_directory_info())
+
     def cleanup_temp_directory(self):
-        """Manually clean up the temp directory"""
+        """Tools menu 'Clean Temp Directory': remove everything in temp/,
+        not just age-gated orphans. This runs on explicit user request so
+        the safety check the startup sweep applies isn't needed here."""
+        if getattr(self, 'conversion_worker', None) and self.conversion_worker.isRunning():
+            QMessageBox.warning(
+                self, 'Cleanup blocked',
+                'A conversion is currently running; its temp files are in use. '
+                'Stop the conversion first, then try again.'
+            )
+            return
         try:
-            cleaned_count = temp_manager.cleanup_orphaned_temp_dirs()
+            cleaned_count = temp_manager.purge_temp_base_dir()
             if cleaned_count > 0:
-                self.log_area.append(f'🧹 Manual cleanup: Removed {cleaned_count} temporary directories.')
+                self.log_area.append(
+                    f'Manual cleanup: removed {cleaned_count} temp directories.'
+                )
             else:
-                self.log_area.append('🧹 Manual cleanup: No temporary directories to clean up.')
-            
-            # Update temp directory info
+                self.log_area.append('Manual cleanup: temp directory was already empty.')
             temp_size = temp_manager.get_temp_dir_size()
-            size_str = temp_manager.format_size(temp_size)
-            self.log_area.append(f'📁 Current temp directory size: {size_str}')
-            
-        except Exception as e:
-            self.log_area.append(f'⚠️ Error during manual cleanup: {e}')
-    
+            self.log_area.append(
+                f'Current temp directory size: {temp_manager.format_size(temp_size)}'
+            )
+        except OSError as e:
+            self.log_area.append(f'Error during manual cleanup: {e}')
+
     def log_area_append(self, text):
         self.log_area.append(text)
         self.log_area.moveCursor(self.log_area.textCursor().End)
 
+
 if __name__ == "__main__":
-    import sys
     app = QApplication(sys.argv)
     window = CHDConverterGUI()
     window.show()
-    sys.exit(app.exec_()) 
+    sys.exit(app.exec_())
